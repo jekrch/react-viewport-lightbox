@@ -65,6 +65,9 @@ export function App() {
   const [instantPark, setInstantPark] = useState(false);
   // Captured from a render slot so the onNavigate handler can reset the shift.
   const shiftRef = useRef<ViewerContext["setContentShift"] | null>(null);
+  // Live refs to each gallery thumbnail so the viewer can expand out of (and
+  // collapse back into) the one that was clicked.
+  const thumbRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   // Once the new index has landed (slide finished), re-park the drawer at the
   // bottom WITHOUT animating; both positions are off-screen, so the user never
@@ -189,7 +192,14 @@ export function App() {
 
         <div className="pg-gallery">
           {items.map((it, i) => (
-            <button key={it.id} className="pg-thumb" onClick={() => openAt(i)}>
+            <button
+              key={it.id}
+              ref={(el) => {
+                thumbRefs.current[i] = el;
+              }}
+              className="pg-thumb"
+              onClick={() => openAt(i)}
+            >
               <img src={it.thumbnail ?? it.src} alt={it.alt} loading="lazy" />
             </button>
           ))}
@@ -207,6 +217,7 @@ export function App() {
           index={index}
           loop={loop}
           zoom={zoom}
+          getOriginRect={(i) => thumbRefs.current[i]?.getBoundingClientRect() ?? null}
           onIndexChange={setIndex}
           onNavigate={(dir) => {
             if (drawerOpen) {

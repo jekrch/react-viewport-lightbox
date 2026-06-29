@@ -19,6 +19,18 @@ export interface ViewerItem<TData = unknown> {
   data?: TData;
 }
 
+/**
+ * A rectangle in viewport coordinates. Structurally compatible with the
+ * `DOMRect` returned by `element.getBoundingClientRect()`, so you can pass one
+ * straight through.
+ */
+export interface ViewerRect {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
+
 /** Named, themeable regions of the viewer that accept a `className` override. */
 export type ViewerSlot =
   | "root"
@@ -98,6 +110,16 @@ export interface ImageViewerProps<TData = unknown> {
   onNavigate?: (direction: "prev" | "next") => void;
   /** Called AFTER the exit animation completes. */
   onClose: () => void;
+
+  /**
+   * Enables a shared-element "zoom from thumbnail" open/close transition. Given
+   * the active index, return the on-screen rect of the source element (e.g. the
+   * gallery thumbnail) — typically `el.getBoundingClientRect()`. The active
+   * image expands from that rect on open and collapses back into it on close.
+   * Return `null` for an index with no on-screen source (or omit the prop
+   * entirely) to fall back to the default fade. Honors reduced-motion.
+   */
+  getOriginRect?: (index: number) => ViewerRect | null;
 
   // Behavior
   /** Enable zoom/pan (wheel, pinch, double-tap). Default `true`. */

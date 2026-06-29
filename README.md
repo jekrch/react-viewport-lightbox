@@ -82,6 +82,7 @@ animation and calls `onClose` after the exit completes.
 | `onIndexChange`       | `(index: number) => void`               | required   | Called when navigation changes the index.                                                                        |
 | `onNavigate`          | `(direction: "prev" \| "next") => void` | optional   | Fired when a slide starts (before `onIndexChange`), so overlays can animate out in sync with the image.          |
 | `onClose`             | `() => void`                            | required   | Called after the exit animation completes.                                                                       |
+| `getOriginRect`       | `(index: number) => ViewerRect \| null` | optional   | Enables a shared-element "zoom from thumbnail" open/close transition. Return the source element's rect (e.g. `el.getBoundingClientRect()`) for the given index, or `null` to fall back to the fade. Honors reduced-motion. |
 | `zoom`                | `boolean`                               | `true`     | Enable wheel/pinch/double-tap zoom + pan.                                                                        |
 | `showCounter`         | `boolean`                               | `true`     | Show the `index / total` counter.                                                                                |
 | `loop`                | `boolean`                               | `false`    | Wrap around at the ends (buttons + arrow keys).                                                                  |
@@ -148,6 +149,38 @@ const items: ViewerItem<Detail>[] = [
 
 `ViewerItem`, `ViewerContext`, and `ImageViewerProps` are all generic over `TData`
 (defaulting to `unknown`), so this is fully type-safe and entirely opt-in.
+
+### Zoom from thumbnail
+
+Pass `getOriginRect` to make the viewer expand out of the clicked thumbnail on open
+and collapse back into it on close (a shared-element transition), instead of the
+default fade. Keep a ref to each thumbnail and return its current on-screen rect for
+the given index; return `null` (or omit the prop) to fall back to the fade. It's
+called again with the active index on close, so navigating then closing collapses
+into the right thumbnail, and it honors `prefers-reduced-motion`.
+
+```tsx
+const thumbs = useRef<(HTMLElement | null)[]>([]);
+
+{
+  items.map((it, i) => (
+    <button key={it.id} ref={(el) => (thumbs.current[i] = el)} onClick={() => open(i)}>
+      <img src={it.thumbnail ?? it.src} alt={it.alt} />
+    </button>
+  ));
+}
+
+<ImageViewer
+  items={items}
+  index={index}
+  onIndexChange={setIndex}
+  onClose={() => setOpen(false)}
+  getOriginRect={(i) => thumbs.current[i]?.getBoundingClientRect() ?? null}
+/>;
+```
+
+The transition reads most seamlessly when the thumbnail and full image share an
+aspect ratio (the thumbnail is, after all, the same picture).
 
 ## Slots & `ViewerContext`
 

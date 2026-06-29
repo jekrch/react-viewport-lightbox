@@ -157,4 +157,34 @@ describe("<ImageViewer>", () => {
     setup(0, { ariaLabel: "Gallery viewer" });
     expect(screen.getByRole("dialog")).toHaveAttribute("aria-label", "Gallery viewer");
   });
+
+  it("never leaves the image hidden when getOriginRect is provided", () => {
+    const rect = { top: 10, left: 20, width: 100, height: 60 };
+    const getOriginRect = vi.fn().mockReturnValue(rect);
+    setup(1, { getOriginRect });
+    // The entry zoom only ever *adds* an animation; it must not hide the image,
+    // so a missed/failed load can't leave it stuck invisible.
+    expect(screen.getByAltText("Bravo").style.opacity).toBe("");
+  });
+
+  it("leaves the image visible when getOriginRect is omitted", () => {
+    setup(1);
+    expect(screen.getByAltText("Bravo").style.opacity).toBe("");
+  });
+
+  it("collapses back into the source rect on close", () => {
+    vi.useFakeTimers();
+    const rect = { top: 10, left: 20, width: 100, height: 60 };
+    const getOriginRect = vi.fn().mockReturnValue(rect);
+    const { onClose } = setup(2, { getOriginRect });
+    getOriginRect.mockClear();
+    fireEvent.click(screen.getByLabelText("Close"));
+    // The current index is queried so the image collapses into its own thumbnail.
+    expect(getOriginRect).toHaveBeenCalledWith(2);
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
 });

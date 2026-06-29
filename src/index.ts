@@ -34,4 +34,11 @@ export type {
   ResolveSlideArgs,
 } from "./hooks";
 
-export type { ViewerItem, ViewerContext, ViewerIcons, ViewerSlot, ImageViewerProps } from "./types";
+export type {
+  ViewerItem,
+  ViewerContext,
+  ViewerIcons,
+  ViewerSlot,
+  ViewerRect,
+  ImageViewerProps,
+} from "./types";

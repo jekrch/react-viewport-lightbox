@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ImageViewerProps, ViewerContext } from "../types";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ImageViewerProps, ViewerContext, ViewerRect } from "../types";
 import { useImageZoomPan, MIN_SCALE, MAX_SCALE } from "../hooks/useImageZoomPan";
 import { useSlideNavigation } from "../hooks/useSlideNavigation";
 import { useGestureHandler } from "../hooks/useGestureHandler";
@@ -12,10 +12,34 @@ import { cx } from "./cx";
 
 const ANIM_MS = 250;
 const IMG_PADDING = 44;
+// Decelerating ease for the shared-element zoom so it settles softly.
+const ZOOM_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 
 function prefersReducedMotion(): boolean {
   if (typeof window === "undefined" || !window.matchMedia) return false;
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/**
+ * CSS transform that maps `from` (the element's current rect) onto `to`,
+ * assuming a `top left` transform-origin. Used for the FLIP-style thumbnail
+ * zoom: place the full image where the thumbnail is, then animate the transform
+ * away so it glides into its real position.
+ */
+function flipTransform(from: ViewerRect, to: ViewerRect): string {
+  const sx = to.width / from.width;
+  const sy = to.height / from.height;
+  const dx = to.left - from.left;
+  const dy = to.top - from.top;
+  return `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+}
+
+/**
+ * True when the Web Animations API is usable on `el`. jsdom (tests) and very old
+ * browsers lack `Element.prototype.animate`, so callers fall back to no anim.
+ */
+function canAnimate(el: HTMLElement | null): el is HTMLElement {
+  return !!el && typeof el.animate === "function";
 }
 
 /**
@@ -30,6 +54,7 @@ export function ImageViewer<TData = unknown>({
   onIndexChange,
   onNavigate,
   onClose,
+  getOriginRect,
   zoom = true,
   showCounter = true,
   loop = false,
@@ -107,12 +132,92 @@ export function ImageViewer<TData = unknown>({
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  // --- Shared-element thumbnail zoom ---------------------------------------
+  // When `getOriginRect` is supplied the image expands out of its source
+  // thumbnail on open and collapses back into it on close. Driven by the Web
+  // Animations API on the <img> itself (zoom/pan owns the wrapper): WAAPI plays
+  // from an explicit start keyframe and owns the transform for the animation's
+  // duration, so React re-renders / the zoom-reset layout effect / frame timing
+  // can't clobber it mid-flight (the failure mode of a raw inline transition).
+  // The FLIP only ever scales down to ≤ 1, sidestepping the iOS upscale-clip bug
+  // noted in useImageZoomPan.
+  const zoomTransition = !!getOriginRect;
+  const entryStartedRef = useRef(false);
+
+  // Idempotent: callable from both the cached-image path and onLoad; runs once.
+  // Never hides the image — it only ever *adds* a transform animation, so a
+  // missed/early/failed load can't leave the picture stuck invisible. The load
+  // handler runs before the decoded image is painted, so animating from there
+  // shows the first (thumbnail) keyframe with no full-size flash.
+  const runZoomEntry = useCallback(() => {
+    if (entryStartedRef.current) return;
+    if (!getOriginRect || prefersReducedMotion()) return;
+    const img = imgRef.current;
+    const thumb = getOriginRect(index);
+    if (!thumb || !canAnimate(img)) return;
+    const imgRect = img.getBoundingClientRect();
+    if (imgRect.width === 0 || imgRect.height === 0) return;
+    entryStartedRef.current = true;
+
+    // The wrapper clips to its own (centered) box; while the image is translated
+    // out to the thumbnail it would otherwise be sliced off. Lift the clip for
+    // the flight, then restore it so zoom/pan clipping still works afterwards.
+    const wrapper = imgWrapperRef.current;
+    if (wrapper) wrapper.style.overflow = "visible";
+
+    // Play from the thumbnail's box to the resting box. fill defaults to "none",
+    // so the resting transform is restored when it finishes, handing the image
+    // cleanly back to zoom/pan.
+    const anim = img.animate(
+      [
+        { transformOrigin: "top left", transform: flipTransform(imgRect, thumb) },
+        { transformOrigin: "top left", transform: "none" },
+      ],
+      { duration: ANIM_MS, easing: ZOOM_EASE },
+    );
+    anim.onfinish = anim.oncancel = () => {
+      if (wrapper) wrapper.style.overflow = "";
+    };
+  }, [getOriginRect, index, imgRef, imgWrapperRef]);
+
+  // Start the entry zoom for an already-cached image, whose `load` event may
+  // have fired before the handler attached. Runs before first paint.
+  useLayoutEffect(() => {
+    const img = imgRef.current;
+    if (img && img.complete && img.naturalWidth > 0) runZoomEntry();
+    // Mount-only: the entry animation runs once, for the opening index.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleClose = useCallback(() => {
+    const reduce = prefersReducedMotion();
+    // Collapse back into the source thumbnail when one exists and the image
+    // isn't zoomed (a zoomed image's box no longer matches the thumbnail).
+    const thumb = !reduce && !isZoomed ? (getOriginRect?.(index) ?? null) : null;
+    const img = imgRef.current;
+
     setClosing(true);
     setVisible(false);
-    const delay = prefersReducedMotion() ? 0 : ANIM_MS;
-    setTimeout(onClose, delay);
-  }, [onClose]);
+
+    if (thumb && canAnimate(img)) {
+      const imgRect = img.getBoundingClientRect();
+      // Lift the wrapper clip so the image isn't sliced as it flies back to the
+      // thumbnail; the component unmounts at onClose, so no restore is needed.
+      const wrapper = imgWrapperRef.current;
+      if (wrapper) wrapper.style.overflow = "visible";
+      // fill "forwards" holds the collapsed pose until the component unmounts.
+      img.animate(
+        [
+          { transformOrigin: "top left", transform: "none" },
+          { transformOrigin: "top left", transform: flipTransform(imgRect, thumb) },
+        ],
+        { duration: ANIM_MS, easing: ZOOM_EASE, fill: "forwards" },
+      );
+    }
+    // Otherwise the backdrop/bars/track simply fade out (default close).
+
+    setTimeout(onClose, reduce ? 0 : ANIM_MS);
+  }, [onClose, getOriginRect, index, isZoomed, imgRef, imgWrapperRef]);
 
   const navigate = useCallback(
     (dir: "prev" | "next") => {
@@ -299,7 +404,13 @@ export function ImageViewer<TData = unknown>({
       >
         <div
           ref={slideTrackRef}
-          className={cx("rvl-track", visible && !closing && "rvl-track-visible")}
+          className={cx(
+            "rvl-track",
+            // During a thumbnail zoom the track is opaque from the first frame
+            // (the image itself is hidden until the zoom starts), so the picture
+            // flies in crisply instead of cross-fading.
+            (zoomTransition || (visible && !closing)) && "rvl-track-visible",
+          )}
         >
           {showAdjacent && prevItem && (
             <div
@@ -336,7 +447,10 @@ export function ImageViewer<TData = unknown>({
               className={cx("rvl-img", cn("image"))}
               style={imgStyle}
               draggable={false}
-              onLoad={measureBaseDims}
+              onLoad={() => {
+                measureBaseDims();
+                runZoomEntry();
+              }}
             />
           </div>
 
