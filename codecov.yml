@@ -1,0 +1,10 @@
+coverage:
+  # Color gradient for the badge/UI: red at the bottom, green at the top.
+  # Top is set to 80 so coverage at or above the goal renders fully green.
+  range: 70..80
+  status:
+    project:
+      default:
+        target: 80%
+        threshold: 1%
+    patch: off

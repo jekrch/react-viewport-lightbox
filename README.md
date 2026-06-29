@@ -1,10 +1,10 @@
 # @jekrch/react-viewport-lightbox
 
-[![npm version](https://img.shields.io/npm/v/@jekrch/react-viewport-lightbox.svg)](https://www.npmjs.com/package/@jekrch/react-viewport-lightbox)
+[![npm version](https://img.shields.io/npm/v/@jekrch/react-viewport-lightbox.svg?color=blue)](https://www.npmjs.com/package/@jekrch/react-viewport-lightbox)
 [![bundle size](https://img.shields.io/bundlephobia/minzip/@jekrch/react-viewport-lightbox)](https://bundlephobia.com/package/@jekrch/react-viewport-lightbox)
 [![coverage](https://codecov.io/gh/jekrch/react-viewport-lightbox/branch/main/graph/badge.svg)](https://codecov.io/gh/jekrch/react-viewport-lightbox)
 [![types](https://img.shields.io/npm/types/@jekrch/react-viewport-lightbox.svg)](https://www.npmjs.com/package/@jekrch/react-viewport-lightbox)
-[![license](https://img.shields.io/npm/l/@jekrch/react-viewport-lightbox.svg)](./LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 A touch-friendly React image viewer and lightbox with zoom, pan, pinch, and swipe.
 It ships an `<ImageViewer>` shell with render slots for headers, footers, and
