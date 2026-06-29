@@ -90,4 +90,71 @@ describe("<ImageViewer>", () => {
     fireEvent.click(prev);
     expect(onIndexChange).toHaveBeenCalledWith(items.length - 1);
   });
+
+  it("closes on the Escape key after the exit delay", () => {
+    vi.useFakeTimers();
+    const { onClose } = setup(0);
+    fireEvent.keyDown(document, { key: "Escape" });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("wraps to the last item on ArrowLeft from the first when looping", () => {
+    const { onIndexChange } = setup(0, { loop: true });
+    fireEvent.keyDown(document, { key: "ArrowLeft" });
+    expect(onIndexChange).toHaveBeenCalledWith(items.length - 1);
+  });
+
+  it("wraps to the first item on ArrowRight from the last when looping", () => {
+    const { onIndexChange } = setup(items.length - 1, { loop: true });
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    expect(onIndexChange).toHaveBeenCalledWith(0);
+  });
+
+  it("shows zoom controls on non-touch devices and zooms in and resets", () => {
+    // jsdom reports a touch device (`ontouchstart` exists); emulate desktop so
+    // the zoom controls render.
+    const hadTouch = "ontouchstart" in window;
+    delete window.ontouchstart;
+    try {
+      setup(0, { zoom: true });
+      fireEvent.click(screen.getByLabelText("Zoom in"));
+      // 1 * 1.3 = 1.3 → the reset control surfaces the current scale.
+      const reset = screen.getByLabelText("Reset zoom");
+      expect(reset).toHaveTextContent("130%");
+      fireEvent.click(reset);
+      expect(screen.queryByLabelText("Reset zoom")).not.toBeInTheDocument();
+    } finally {
+      if (hadTouch) (window as unknown as { ontouchstart?: unknown }).ontouchstart = undefined;
+    }
+  });
+
+  it("renders every custom slot", () => {
+    setup(0, {
+      renderHeader: () => <div>HEADER-SLOT</div>,
+      renderHeaderActions: () => <button>ACTION-SLOT</button>,
+      renderNavStart: () => <button>START-SLOT</button>,
+      renderNavEnd: () => <button>END-SLOT</button>,
+      renderFooter: () => <div>FOOTER-SLOT</div>,
+      renderOverlay: () => <div>OVERLAY-SLOT</div>,
+    });
+    for (const text of [
+      "HEADER-SLOT",
+      "ACTION-SLOT",
+      "START-SLOT",
+      "END-SLOT",
+      "FOOTER-SLOT",
+      "OVERLAY-SLOT",
+    ]) {
+      expect(screen.getByText(text)).toBeInTheDocument();
+    }
+  });
+
+  it("uses ariaLabel for the dialog when provided", () => {
+    setup(0, { ariaLabel: "Gallery viewer" });
+    expect(screen.getByRole("dialog")).toHaveAttribute("aria-label", "Gallery viewer");
+  });
 });

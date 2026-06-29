@@ -1,9 +1,17 @@
 # @jekrch/react-viewport-lightbox
 
+[![npm version](https://img.shields.io/npm/v/@jekrch/react-viewport-lightbox.svg)](https://www.npmjs.com/package/@jekrch/react-viewport-lightbox)
+[![bundle size](https://img.shields.io/bundlephobia/minzip/@jekrch/react-viewport-lightbox)](https://bundlephobia.com/package/@jekrch/react-viewport-lightbox)
+[![coverage](https://codecov.io/gh/jekrch/react-viewport-lightbox/branch/main/graph/badge.svg)](https://codecov.io/gh/jekrch/react-viewport-lightbox)
+[![types](https://img.shields.io/npm/types/@jekrch/react-viewport-lightbox.svg)](https://www.npmjs.com/package/@jekrch/react-viewport-lightbox)
+[![license](https://img.shields.io/npm/l/@jekrch/react-viewport-lightbox.svg)](./LICENSE)
+
 A touch-friendly React image viewer and lightbox with zoom, pan, pinch, and swipe.
 It ships an `<ImageViewer>` shell with render slots for headers, footers, and
 overlays (info drawers, graphs, and so on), and the interaction hooks are exported
 if you'd rather build your own shell.
+
+**[Live demo →](https://jekrch.github.io/react-viewport-lightbox/)**
 
 - **Zero runtime dependencies.** React is a peer dependency; no Tailwind or icon
   library required.
@@ -67,37 +75,79 @@ animation and calls `onClose` after the exit completes.
 
 ## Props
 
-| Prop | Type | Default | Description |
-| --- | --- | --- | --- |
-| `items` | `ViewerItem[]` | required | Images to display. |
-| `index` | `number` | required | Controlled index of the active item. |
-| `onIndexChange` | `(index: number) => void` | required | Called when navigation changes the index. |
-| `onNavigate` | `(direction: "prev" \| "next") => void` | optional | Fired when a slide starts (before `onIndexChange`), so overlays can animate out in sync with the image. |
-| `onClose` | `() => void` | required | Called after the exit animation completes. |
-| `zoom` | `boolean` | `true` | Enable wheel/pinch/double-tap zoom + pan. |
-| `showCounter` | `boolean` | `true` | Show the `index / total` counter. |
-| `loop` | `boolean` | `false` | Wrap around at the ends (buttons + arrow keys). |
-| `showThumbnails` | `boolean` | `false` | Reserved for a future thumbnail strip. |
-| `renderHeader` | `(ctx) => ReactNode` | optional | Top-left title area. |
-| `renderHeaderActions` | `(ctx) => ReactNode` | optional | Extra top-right buttons (before Close). |
-| `renderNavStart` | `(ctx) => ReactNode` | optional | Pinned to the left edge of the nav row (e.g. a details toggle); costs no extra height, nav group stays centered. |
-| `renderNavEnd` | `(ctx) => ReactNode` | optional | Pinned to the right edge of the nav row. |
-| `renderFooter` | `(ctx) => ReactNode` | optional | Content below the nav row. |
-| `renderOverlay` | `(ctx) => ReactNode` | optional | Drawers and graphs layered over the image. |
-| `classNames` | `Partial<Record<ViewerSlot, string>>` | optional | Per-slot `className` overrides. |
-| `icons` | `Partial<ViewerIcons>` | optional | Override `close`, `zoomIn`, `zoomOut`, `prev`, and `next`. |
-| `ariaLabel` | `string` | item `alt` | Dialog label. |
+| Prop                  | Type                                    | Default    | Description                                                                                                      |
+| --------------------- | --------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------- |
+| `items`               | `ViewerItem[]`                          | required   | Images to display.                                                                                               |
+| `index`               | `number`                                | required   | Controlled index of the active item.                                                                             |
+| `onIndexChange`       | `(index: number) => void`               | required   | Called when navigation changes the index.                                                                        |
+| `onNavigate`          | `(direction: "prev" \| "next") => void` | optional   | Fired when a slide starts (before `onIndexChange`), so overlays can animate out in sync with the image.          |
+| `onClose`             | `() => void`                            | required   | Called after the exit animation completes.                                                                       |
+| `zoom`                | `boolean`                               | `true`     | Enable wheel/pinch/double-tap zoom + pan.                                                                        |
+| `showCounter`         | `boolean`                               | `true`     | Show the `index / total` counter.                                                                                |
+| `loop`                | `boolean`                               | `false`    | Wrap around at the ends (buttons + arrow keys).                                                                  |
+| `renderHeader`        | `(ctx) => ReactNode`                    | optional   | Top-left title area.                                                                                             |
+| `renderHeaderActions` | `(ctx) => ReactNode`                    | optional   | Extra top-right buttons (before Close).                                                                          |
+| `renderNavStart`      | `(ctx) => ReactNode`                    | optional   | Pinned to the left edge of the nav row (e.g. a details toggle); costs no extra height, nav group stays centered. |
+| `renderNavEnd`        | `(ctx) => ReactNode`                    | optional   | Pinned to the right edge of the nav row.                                                                         |
+| `renderFooter`        | `(ctx) => ReactNode`                    | optional   | Content below the nav row.                                                                                       |
+| `renderOverlay`       | `(ctx) => ReactNode`                    | optional   | Drawers and graphs layered over the image.                                                                       |
+| `classNames`          | `Partial<Record<ViewerSlot, string>>`   | optional   | Per-slot `className` overrides.                                                                                  |
+| `icons`               | `Partial<ViewerIcons>`                  | optional   | Override `close`, `zoomIn`, `zoomOut`, `prev`, and `next`.                                                       |
+| `ariaLabel`           | `string`                                | item `alt` | Dialog label.                                                                                                    |
 
 ### `ViewerItem`
 
 ```ts
-interface ViewerItem {
+interface ViewerItem<TData = unknown> {
   id: string;
   src: string; // final url
   alt?: string;
   thumbnail?: string; // falls back to src
+  data?: TData; // optional per-slide payload (see below)
 }
 ```
+
+### Per-slide details
+
+Anything richer than `alt` (a caption, credit line, tags, links) can live on the
+item itself via the optional `data` field, instead of keeping a parallel array or
+`id → details` map in sync as the index changes. Type it once and the viewer
+passes it to every slot as `ctx.item.data`:
+
+```tsx
+interface Detail {
+  title: string;
+  body: string;
+}
+
+const items: ViewerItem<Detail>[] = [
+  {
+    id: "1",
+    src: "/photos/1.jpg",
+    alt: "First",
+    data: { title: "Sunrise", body: "Shot at dawn." },
+  },
+  { id: "2", src: "/photos/2.jpg", alt: "Second", data: { title: "Dusk", body: "Golden hour." } },
+];
+
+<ImageViewer
+  items={items} // TData is inferred, no annotation needed at the call site
+  index={index}
+  onIndexChange={setIndex}
+  onClose={() => setOpen(false)}
+  renderOverlay={(ctx) => (
+    // ctx.item.data is typed as Detail | undefined, and always matches the
+    // current slide, and updates as you navigate.
+    <div className="my-details">
+      <h2>{ctx.item.data?.title}</h2>
+      <p>{ctx.item.data?.body}</p>
+    </div>
+  )}
+/>;
+```
+
+`ViewerItem`, `ViewerContext`, and `ImageViewerProps` are all generic over `TData`
+(defaulting to `unknown`), so this is fully type-safe and entirely opt-in.
 
 ## Slots & `ViewerContext`
 
@@ -105,10 +155,10 @@ Every `render*` slot receives a `ViewerContext` with navigation, zoom, and layou
 state so slot content can coordinate with the viewer:
 
 ```ts
-interface ViewerContext {
-  items: ViewerItem[];
+interface ViewerContext<TData = unknown> {
+  items: ViewerItem<TData>[];
   index: number;
-  item: ViewerItem;
+  item: ViewerItem<TData>; // item.data holds your per-slide payload
   total: number;
 
   hasPrev: boolean;
@@ -151,7 +201,12 @@ const shiftRef = useRef<ViewerContext["setContentShift"] | null>(null);
 // After the slide lands, re-park the drawer at the bottom without animating
 // (both positions are off-screen, so it snaps invisibly).
 const [instant, setInstant] = useState(false);
-useEffect(() => { if (slideDir) { setInstant(true); setSlideDir(null); } }, [index]);
+useEffect(() => {
+  if (slideDir) {
+    setInstant(true);
+    setSlideDir(null);
+  }
+}, [index]);
 useEffect(() => {
   if (!instant) return;
   const r = requestAnimationFrame(() => setInstant(false));
@@ -160,7 +215,9 @@ useEffect(() => {
 
 const transform = slideDir
   ? `translateX(${slideDir === "next" ? "-100%" : "100%"})`
-  : drawer ? "translateY(0)" : "translateY(100vh)";
+  : drawer
+    ? "translateY(0)"
+    : "translateY(100vh)";
 
 <ImageViewer
   items={items}
@@ -195,7 +252,7 @@ const transform = slideDir
           position: "absolute",
           left: 0,
           right: 0,
-          top: ctx.topBarHeight,      // size between the measured bars
+          top: ctx.topBarHeight, // size between the measured bars
           bottom: ctx.bottomBarHeight,
           // opaque, but pixel-identical to the area behind the image
           background: `linear-gradient(var(--rvl-overlay-bg), var(--rvl-overlay-bg)), ${PAGE_BG}`,
@@ -208,7 +265,7 @@ const transform = slideDir
       </div>
     );
   }}
-/>
+/>;
 ```
 
 `renderNavStart` keeps the prev/counter/next group optically centered, so the
@@ -221,13 +278,13 @@ instant. For a partial peek drawer, use a smaller animated shift like
 
 Override any of these CSS custom properties (cascade into the viewer):
 
-| Variable | Default |
-| --- | --- |
-| `--rvl-accent` | `#7fb069` |
-| `--rvl-overlay-bg` | `rgba(0,0,0,0.9)` |
+| Variable                              | Default           |
+| ------------------------------------- | ----------------- |
+| `--rvl-accent`                        | `#4c538d`         |
+| `--rvl-overlay-bg`                    | `rgba(0,0,0,0.9)` |
 | `--rvl-btn-bg` / `--rvl-btn-bg-hover` | translucent white |
-| `--rvl-radius` | `4px` |
-| `--rvl-anim-duration` | `250ms` |
+| `--rvl-radius`                        | `4px`             |
+| `--rvl-anim-duration`                 | `250ms`           |
 
 ```css
 .my-gallery {

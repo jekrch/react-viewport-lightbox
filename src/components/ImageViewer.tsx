@@ -24,7 +24,7 @@ function prefersReducedMotion(): boolean {
  * `onIndexChange`; mount it when open and it runs its own enter/exit animation,
  * calling `onClose` after the exit completes.
  */
-export function ImageViewer({
+export function ImageViewer<TData = unknown>({
   items,
   index,
   onIndexChange,
@@ -42,7 +42,7 @@ export function ImageViewer({
   classNames,
   icons,
   ariaLabel,
-}: ImageViewerProps) {
+}: ImageViewerProps<TData>) {
   const [visible, setVisible] = useState(false);
   const [closing, setClosing] = useState(false);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
@@ -153,7 +153,7 @@ export function ImageViewer({
     setContentShiftState({ transform, animate });
   }, []);
 
-  const ctx: ViewerContext = {
+  const ctx: ViewerContext<TData> = {
     items,
     index,
     item: item!,
@@ -390,9 +390,7 @@ export function ImageViewer({
                   />
                 </div>
               )}
-              {navEnd != null && (
-                <div className={cx("rvl-nav-end", cn("navEnd"))}>{navEnd}</div>
-              )}
+              {navEnd != null && <div className={cx("rvl-nav-end", cn("navEnd"))}>{navEnd}</div>}
             </div>
           </div>
         )}
@@ -400,7 +398,9 @@ export function ImageViewer({
         {renderFooter && <div className="rvl-footer">{renderFooter(ctx)}</div>}
       </div>
 
-      {renderOverlay && <div className={cx("rvl-overlay", cn("overlay"))}>{renderOverlay(ctx)}</div>}
+      {renderOverlay && (
+        <div className={cx("rvl-overlay", cn("overlay"))}>{renderOverlay(ctx)}</div>
+      )}
     </div>
   );
 }

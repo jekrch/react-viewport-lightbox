@@ -8,5 +8,16 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html", "lcov"],
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/**/*.{test,spec}.{ts,tsx}",
+        "src/index.ts",
+        "src/hooks/index.ts",
+        "src/types.ts",
+      ],
+    },
   },
 });

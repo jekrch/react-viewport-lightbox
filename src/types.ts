@@ -3,14 +3,20 @@ import type { ReactNode } from "react";
 /**
  * A single image in the viewer. Neutral replacement for app-specific item
  * types (e.g. `Panel` / `Organism`).
+ *
+ * `TData` is an optional per-slide payload (caption, credit, links, anything).
+ * It travels with the item and is surfaced as `ctx.item.data` in every render
+ * slot, so details stay paired with their image without a parallel lookup.
  */
-export interface ViewerItem {
+export interface ViewerItem<TData = unknown> {
   id: string;
   /** FINAL url — the consumer resolves any base path before passing it in. */
   src: string;
   alt?: string;
   /** Optional thumbnail url; falls back to `src`. */
   thumbnail?: string;
+  /** Arbitrary per-slide payload, surfaced as `ctx.item.data` in render slots. */
+  data?: TData;
 }
 
 /** Named, themeable regions of the viewer that accept a `className` override. */
@@ -41,10 +47,10 @@ export interface ViewerIcons {
  * layout-measurement state so slot content (info drawers, graphs, custom
  * headers) can coordinate with the viewer.
  */
-export interface ViewerContext {
-  items: ViewerItem[];
+export interface ViewerContext<TData = unknown> {
+  items: ViewerItem<TData>[];
   index: number;
-  item: ViewerItem;
+  item: ViewerItem<TData>;
   total: number;
 
   hasPrev: boolean;
@@ -79,8 +85,8 @@ export interface ViewerContext {
   setContentShift: (transform: string | null, animate?: boolean) => void;
 }
 
-export interface ImageViewerProps {
-  items: ViewerItem[];
+export interface ImageViewerProps<TData = unknown> {
+  items: ViewerItem<TData>[];
   /** Controlled index of the active item. */
   index: number;
   onIndexChange: (index: number) => void;
@@ -96,8 +102,6 @@ export interface ImageViewerProps {
   // Behavior
   /** Enable zoom/pan (wheel, pinch, double-tap). Default `true`. */
   zoom?: boolean;
-  /** Reserved for a future thumbnail strip. Default `false`. */
-  showThumbnails?: boolean;
   /** Show the `index / total` counter. Default `true`. */
   showCounter?: boolean;
   /** Wrap around at the ends. Default `false`. */
@@ -105,21 +109,21 @@ export interface ImageViewerProps {
 
   // Slots (all receive ViewerContext)
   /** Top-left title area. */
-  renderHeader?: (ctx: ViewerContext) => ReactNode;
+  renderHeader?: (ctx: ViewerContext<TData>) => ReactNode;
   /** Extra top-right buttons, rendered before the close button. */
-  renderHeaderActions?: (ctx: ViewerContext) => ReactNode;
+  renderHeaderActions?: (ctx: ViewerContext<TData>) => ReactNode;
   /**
    * Pinned to the LEFT edge of the nav row, vertically centered alongside the
    * prev/counter/next group (which stays optically centered). Ideal for an
    * info/details toggle that should not cost an extra row of vertical space.
    */
-  renderNavStart?: (ctx: ViewerContext) => ReactNode;
+  renderNavStart?: (ctx: ViewerContext<TData>) => ReactNode;
   /** Pinned to the RIGHT edge of the nav row; mirror of `renderNavStart`. */
-  renderNavEnd?: (ctx: ViewerContext) => ReactNode;
+  renderNavEnd?: (ctx: ViewerContext<TData>) => ReactNode;
   /** Content below the nav row. */
-  renderFooter?: (ctx: ViewerContext) => ReactNode;
+  renderFooter?: (ctx: ViewerContext<TData>) => ReactNode;
   /** Drawers/graphs layered over the image. */
-  renderOverlay?: (ctx: ViewerContext) => ReactNode;
+  renderOverlay?: (ctx: ViewerContext<TData>) => ReactNode;
 
   // Theming / a11y
   classNames?: Partial<Record<ViewerSlot, string>>;
