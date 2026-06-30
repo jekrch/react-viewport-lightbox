@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ImageViewer, type ViewerContext, type ViewerItem } from "@jekrch/react-viewport-lightbox";
+import { CodePanel } from "./CodePanel";
 import "../src/styles.css";
 import "./playground.css";
 
@@ -53,7 +54,10 @@ export function App() {
   const [index, setIndex] = useState(0);
   const [loop, setLoop] = useState(true);
   const [zoom, setZoom] = useState(true);
+  const [zoomToCursor, setZoomToCursor] = useState(true);
+  const [closeOnBackdropClick, setCloseOnBackdropClick] = useState(true);
   const [accent, setAccent] = useState(ACCENTS[0]);
+  const [showCode, setShowCode] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -175,6 +179,31 @@ export function App() {
             <input type="checkbox" checked={zoom} onChange={(e) => setZoom(e.target.checked)} />
             Zoom &amp; pan
           </label>
+          <label className="pg-toggle">
+            <input
+              type="checkbox"
+              checked={zoomToCursor}
+              disabled={!zoom}
+              onChange={(e) => setZoomToCursor(e.target.checked)}
+            />
+            Zoom to cursor
+          </label>
+          <label className="pg-toggle">
+            <input
+              type="checkbox"
+              checked={closeOnBackdropClick}
+              onChange={(e) => setCloseOnBackdropClick(e.target.checked)}
+            />
+            Click backdrop to close
+          </label>
+          <label className="pg-toggle">
+            <input
+              type="checkbox"
+              checked={showCode}
+              onChange={(e) => setShowCode(e.target.checked)}
+            />
+            Show code
+          </label>
           <div className="pg-swatches">
             <span>Accent</span>
             {ACCENTS.map((c) => (
@@ -187,6 +216,20 @@ export function App() {
                 title={c}
               />
             ))}
+          </div>
+        </div>
+
+        {/* Kept mounted and animated open/closed via a grid-rows transition so
+            the snippet slides in instead of popping. */}
+        <div className={`pg-code-wrap${showCode ? " is-open" : ""}`} aria-hidden={!showCode}>
+          <div className="pg-code-inner">
+            <CodePanel
+              loop={loop}
+              zoom={zoom}
+              zoomToCursor={zoomToCursor}
+              closeOnBackdropClick={closeOnBackdropClick}
+              accent={accent}
+            />
           </div>
         </div>
 
@@ -217,6 +260,8 @@ export function App() {
           index={index}
           loop={loop}
           zoom={zoom}
+          zoomToCursor={zoomToCursor}
+          closeOnBackdropClick={closeOnBackdropClick}
           getOriginRect={(i) => thumbRefs.current[i]?.getBoundingClientRect() ?? null}
           onIndexChange={setIndex}
           onNavigate={(dir) => {

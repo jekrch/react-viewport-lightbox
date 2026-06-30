@@ -30,6 +30,8 @@ export function useSlideNavigation(
   currentIndex: number,
   onNavigate: (index: number) => void,
   onSlideStart?: (direction: "prev" | "next") => void,
+  /** When true, navigation wraps around the ends instead of stopping. */
+  loop = false,
 ): SlideNavigationState {
   const slideTrackRef = useRef<HTMLDivElement>(null);
   const swipeOffsetRef = useRef(0);
@@ -38,8 +40,10 @@ export function useSlideNavigation(
   const [slideActive, setSlideActive] = useState(false);
   const commitLockRef = useRef(false);
 
-  const hasPrev = currentIndex > 0;
-  const hasNext = currentIndex < items.length - 1;
+  // With loop on, every interior position has a neighbor in both directions as
+  // long as there's more than one item to wrap to.
+  const hasPrev = loop ? items.length > 1 : currentIndex > 0;
+  const hasNext = loop ? items.length > 1 : currentIndex < items.length - 1;
 
   const applySlideOffset = useCallback((offset: number, animate = false) => {
     swipeOffsetRef.current = offset;
@@ -97,7 +101,10 @@ export function useSlideNavigation(
           cleaned = true;
           track?.removeEventListener("transitionend", onTransitionEnd);
 
-          const newIndex = direction === "prev" ? currentIndex - 1 : currentIndex + 1;
+          let newIndex = direction === "prev" ? currentIndex - 1 : currentIndex + 1;
+          // Wrap the index when looping so the slide that just played lands on
+          // the far end (e.g. last → first) instead of bailing out of bounds.
+          if (loop) newIndex = (newIndex + items.length) % items.length;
           if (newIndex < 0 || newIndex >= items.length) {
             commitLockRef.current = false;
             return;
@@ -130,7 +137,7 @@ export function useSlideNavigation(
         }
       });
     },
-    [applySlideOffset, currentIndex, items, onNavigate, onSlideStart],
+    [applySlideOffset, currentIndex, items, onNavigate, onSlideStart, loop],
   );
 
   const resolveSlide = useCallback(

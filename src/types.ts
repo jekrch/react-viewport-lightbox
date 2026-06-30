@@ -43,7 +43,8 @@ export type ViewerSlot =
   | "navButton"
   | "navStart"
   | "navEnd"
-  | "overlay";
+  | "overlay"
+  | "spinner";
 
 /** Overridable control icons. Each is a React node rendered inside its button. */
 export interface ViewerIcons {
@@ -124,10 +125,22 @@ export interface ImageViewerProps<TData = unknown> {
   // Behavior
   /** Enable zoom/pan (wheel, pinch, double-tap). Default `true`. */
   zoom?: boolean;
+  /**
+   * Anchor wheel- and pinch-zoom on the pointer: scrolling zooms toward the
+   * cursor and a pinch zooms toward the gesture midpoint. Set `false` to zoom
+   * about the viewport center instead. Default `true`.
+   */
+  zoomToCursor?: boolean;
   /** Show the `index / total` counter. Default `true`. */
   showCounter?: boolean;
   /** Wrap around at the ends. Default `false`. */
   loop?: boolean;
+  /**
+   * Close the viewer when the empty area around the image (the backdrop) is
+   * clicked. Clicks on the image, the bars, and the control buttons are
+   * unaffected. Default `false`.
+   */
+  closeOnBackdropClick?: boolean;
 
   // Slots (all receive ViewerContext)
   /** Top-left title area. */

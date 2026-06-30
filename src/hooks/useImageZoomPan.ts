@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { clampTranslate as clampTranslatePure } from "./math";
+import { clampTranslate as clampTranslatePure, zoomToPoint } from "./math";
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 5;
@@ -44,6 +44,11 @@ export function useImageZoomPan(
   currentIndex: number,
   /** When false, wheel-zoom and double-click-zoom are disabled. Default true. */
   enabled = true,
+  /**
+   * When true (default), wheel-zoom anchors on the cursor. When false, it zooms
+   * about the viewport center.
+   */
+  zoomToCursor = true,
 ): ImageZoomPanState {
   const imgRef = useRef<HTMLImageElement>(null);
   const [displayScale, setDisplayScale] = useState(1);
@@ -158,13 +163,27 @@ export function useImageZoomPan(
       const factor = 1 + step;
 
       const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, t.scale * factor));
-      const clamped = nextScale <= 1 ? { x: 0, y: 0 } : clampTranslate(t.x, t.y, nextScale);
+      let clamped: { x: number; y: number };
+      if (nextScale <= 1) {
+        clamped = { x: 0, y: 0 };
+      } else if (zoomToCursor) {
+        const focal = zoomToPoint(
+          t.scale,
+          nextScale,
+          { x: t.x, y: t.y },
+          { x: e.clientX, y: e.clientY },
+          { width: window.innerWidth, height: window.innerHeight },
+        );
+        clamped = clampTranslate(focal.x, focal.y, nextScale);
+      } else {
+        clamped = clampTranslate(t.x, t.y, nextScale);
+      }
       setTransform({ scale: nextScale, ...clamped });
     };
 
     wrapper.addEventListener("wheel", handleWheel, { passive: false });
     return () => wrapper.removeEventListener("wheel", handleWheel);
-  }, [imgWrapperRef, setTransform, clampTranslate, enabled]);
+  }, [imgWrapperRef, setTransform, clampTranslate, enabled, zoomToCursor]);
 
   // Double-click toggle
 

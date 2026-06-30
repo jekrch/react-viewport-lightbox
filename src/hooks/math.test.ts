@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clampTranslate, resolveSlideDirection } from "./math";
+import { clampTranslate, resolveSlideDirection, zoomToPoint } from "./math";
 
 const viewport = { width: 1000, height: 800 };
 
@@ -32,6 +32,53 @@ describe("clampTranslate", () => {
     // Tiny image scaled 2x is still smaller than the viewport → no panning room.
     const base = { width: 100, height: 100 };
     expect(clampTranslate(50, 50, 2, base, viewport)).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe("zoomToPoint", () => {
+  const center = { x: viewport.width / 2, y: viewport.height / 2 };
+
+  // The viewer scales the wrapper about the viewport center, so a content point
+  // appears on screen at `center + scale * (point - center) + translate`. This
+  // resolves the content point under `focal` before the zoom and asserts it
+  // lands back on `focal` after applying the computed translate.
+  const screenOf = (
+    focal: { x: number; y: number },
+    prevScale: number,
+    prev: { x: number; y: number },
+    nextScale: number,
+    next: { x: number; y: number },
+  ) => {
+    const relX = (focal.x - center.x - prev.x) / prevScale;
+    const relY = (focal.y - center.y - prev.y) / prevScale;
+    return {
+      x: center.x + nextScale * relX + next.x,
+      y: center.y + nextScale * relY + next.y,
+    };
+  };
+
+  it("keeps the focal point anchored when zooming from rest", () => {
+    const focal = { x: 700, y: 300 };
+    const next = zoomToPoint(1, 2, { x: 0, y: 0 }, focal, viewport);
+    expect(screenOf(focal, 1, { x: 0, y: 0 }, 2, next)).toEqual(focal);
+  });
+
+  it("keeps the focal point anchored across an incremental zoom step", () => {
+    const focal = { x: 250, y: 650 };
+    const prev = { x: -40, y: 25 };
+    const next = zoomToPoint(2, 2.6, prev, focal, viewport);
+    const after = screenOf(focal, 2, prev, 2.6, next);
+    expect(after.x).toBeCloseTo(focal.x);
+    expect(after.y).toBeCloseTo(focal.y);
+  });
+
+  it("leaves the translate unchanged when the focal point is the center", () => {
+    expect(zoomToPoint(1, 3, { x: 0, y: 0 }, center, viewport)).toEqual({ x: 0, y: 0 });
+  });
+
+  it("is a no-op when the scale does not change", () => {
+    const prev = { x: 30, y: -10 };
+    expect(zoomToPoint(2, 2, prev, { x: 800, y: 100 }, viewport)).toEqual(prev);
   });
 });
 

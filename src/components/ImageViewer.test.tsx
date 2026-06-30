@@ -83,12 +83,47 @@ describe("<ImageViewer>", () => {
     vi.useRealTimers();
   });
 
+  it("closes on a backdrop click when closeOnBackdropClick is set", () => {
+    vi.useFakeTimers();
+    const { onClose } = setup(0, { closeOnBackdropClick: true });
+    fireEvent.click(document.querySelector(".rvl-stage")!);
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("ignores backdrop clicks by default", () => {
+    vi.useFakeTimers();
+    const { onClose } = setup(0);
+    fireEvent.click(document.querySelector(".rvl-stage")!);
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("does not close on an image click even when closeOnBackdropClick is set", () => {
+    vi.useFakeTimers();
+    const { onClose } = setup(0, { closeOnBackdropClick: true });
+    fireEvent.click(screen.getByAltText("Alpha"));
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("loops the prev button at the first item when loop is enabled", () => {
-    const { onIndexChange } = setup(0, { loop: true });
+    setup(0, { loop: true });
     const prev = screen.getByLabelText("Previous image");
     expect(prev).toBeEnabled();
+    // Wrapping now plays the three-slot slide (async, decode-gated) rather than
+    // jumping, so the wrap-around neighbor mounts into the track to slide in.
     fireEvent.click(prev);
-    expect(onIndexChange).toHaveBeenCalledWith(items.length - 1);
+    expect(document.querySelector('img[src="/c.jpg"]')).toBeInTheDocument();
   });
 
   it("closes on the Escape key after the exit delay", () => {
@@ -103,15 +138,17 @@ describe("<ImageViewer>", () => {
   });
 
   it("wraps to the last item on ArrowLeft from the first when looping", () => {
-    const { onIndexChange } = setup(0, { loop: true });
+    setup(0, { loop: true });
+    // The wrap slides the last item (/c.jpg) in from the left.
     fireEvent.keyDown(document, { key: "ArrowLeft" });
-    expect(onIndexChange).toHaveBeenCalledWith(items.length - 1);
+    expect(document.querySelector('img[src="/c.jpg"]')).toBeInTheDocument();
   });
 
   it("wraps to the first item on ArrowRight from the last when looping", () => {
-    const { onIndexChange } = setup(items.length - 1, { loop: true });
+    setup(items.length - 1, { loop: true });
+    // The wrap slides the first item (/a.jpg) in from the right.
     fireEvent.keyDown(document, { key: "ArrowRight" });
-    expect(onIndexChange).toHaveBeenCalledWith(0);
+    expect(document.querySelector('img[src="/a.jpg"]')).toBeInTheDocument();
   });
 
   it("shows zoom controls on non-touch devices and zooms in and resets", () => {
@@ -158,18 +195,52 @@ describe("<ImageViewer>", () => {
     expect(screen.getByRole("dialog")).toHaveAttribute("aria-label", "Gallery viewer");
   });
 
-  it("never leaves the image hidden when getOriginRect is provided", () => {
+  it("holds the image hidden until the full source loads, then reveals it", () => {
     const rect = { top: 10, left: 20, width: 100, height: 60 };
     const getOriginRect = vi.fn().mockReturnValue(rect);
     setup(1, { getOriginRect });
-    // The entry zoom only ever *adds* an animation; it must not hide the image,
-    // so a missed/failed load can't leave it stuck invisible.
-    expect(screen.getByAltText("Bravo").style.opacity).toBe("");
+    const img = screen.getByAltText("Bravo");
+    // Hidden while the full image loads so the zoom can play from the thumbnail
+    // without a full-size flash...
+    expect(img.style.opacity).toBe("0");
+    // ...and revealed once it has loaded.
+    act(() => {
+      fireEvent.load(img);
+    });
+    expect(img.style.opacity).toBe("");
+  });
+
+  it("reveals the image even if it fails to load", () => {
+    const getOriginRect = vi.fn().mockReturnValue({ top: 0, left: 0, width: 10, height: 10 });
+    setup(1, { getOriginRect });
+    const img = screen.getByAltText("Bravo");
+    act(() => {
+      fireEvent.error(img);
+    });
+    expect(img.style.opacity).toBe("");
   });
 
   it("leaves the image visible when getOriginRect is omitted", () => {
     setup(1);
     expect(screen.getByAltText("Bravo").style.opacity).toBe("");
+  });
+
+  it("shows a loading spinner only after the image is slow to load", () => {
+    vi.useFakeTimers();
+    const getOriginRect = vi.fn().mockReturnValue({ top: 0, left: 0, width: 10, height: 10 });
+    setup(1, { getOriginRect });
+    // No spinner up front — quick loads shouldn't flash one.
+    expect(document.querySelector(".rvl-spinner")).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(document.querySelector(".rvl-spinner")).not.toBeNull();
+    // It clears once the image loads.
+    act(() => {
+      fireEvent.load(screen.getByAltText("Bravo"));
+    });
+    expect(document.querySelector(".rvl-spinner")).toBeNull();
+    vi.useRealTimers();
   });
 
   it("collapses back into the source rect on close", () => {

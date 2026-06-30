@@ -159,6 +159,7 @@ body {
   font-size: 1.05rem;
   font-weight: 600;
   letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 .pg-section-head p {
   margin: 0;
@@ -242,6 +243,93 @@ body {
 }
 .pg-swatch.is-active {
   border-color: #fff;
+}
+
+/* Code panel ---------------------------------------------------------------- */
+
+/* Animated open/close wrapper: 0fr -> 1fr collapses/expands the row to the
+   content's natural height without measuring it in JS. */
+.pg-code-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-bottom: 0;
+  transition:
+    grid-template-rows 0.35s cubic-bezier(0.25, 0.1, 0.25, 1),
+    opacity 0.25s ease,
+    margin-bottom 0.35s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+.pg-code-wrap.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-bottom: 1.25rem;
+}
+.pg-code-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pg-code-wrap {
+    transition: none;
+  }
+}
+
+.pg-code {
+  border: 1px solid var(--pg-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0d0d10;
+}
+.pg-code-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.6rem 0.5rem 0.9rem;
+  border-bottom: 1px solid var(--pg-border);
+  background: var(--pg-bg-soft);
+}
+.pg-code-file {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  color: var(--pg-fg-muted);
+}
+.pg-code-hint {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--pg-fg-faint);
+}
+.pg-code-body {
+  margin: 0;
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--pg-fg);
+  tab-size: 2;
+}
+.pg-code-body code {
+  font: inherit;
+  white-space: pre;
+}
+
+/* Syntax tokens */
+.c-comment {
+  color: var(--pg-fg-faint);
+  font-style: italic;
+}
+.c-string {
+  color: #9ece6a;
+}
+.c-keyword {
+  color: #bb9af7;
+}
+.c-component {
+  color: #7dcfff;
+}
+.c-prop {
+  color: #e0af68;
 }
 
 /* Gallery ------------------------------------------------------------------- */

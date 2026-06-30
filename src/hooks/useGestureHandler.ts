@@ -1,4 +1,5 @@
 import { useCallback, useRef } from "react";
+import { zoomToPoint } from "./math";
 import type { ImageZoomPanState } from "./useImageZoomPan";
 import type { SlideNavigationState } from "./useSlideNavigation";
 
@@ -45,6 +46,11 @@ export function useGestureHandler(
   hasNext: boolean,
   /** When false, pinch-zoom and double-tap-zoom are disabled. Default true. */
   zoomEnabled = true,
+  /**
+   * When true (default), pinch-zoom anchors on the gesture midpoint. When
+   * false, it zooms about the viewport center.
+   */
+  zoomToCursor = true,
 ): GestureHandlers {
   const { transformRef, clampTranslate, setTransform, applyTransform, resetTransform } = zoomPan;
   const { applySlideOffset, resolveSlide, snapBack, setSlideActive, swipeOffsetRef } = slide;
@@ -231,7 +237,23 @@ export function useGestureHandler(
         const ratio = dist / p.pinchStartDist;
         const nextScale = Math.min(5, Math.max(1, p.pinchStartScale * ratio));
         const t = transformRef.current;
-        const clamped = nextScale <= 1 ? { x: 0, y: 0 } : clampTranslate(t.x, t.y, nextScale);
+        let clamped: { x: number; y: number };
+        if (nextScale <= 1) {
+          clamped = { x: 0, y: 0 };
+        } else if (zoomToCursor) {
+          const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+          const focal = zoomToPoint(
+            t.scale,
+            nextScale,
+            { x: t.x, y: t.y },
+            { x: midX, y: midY },
+            { width: window.innerWidth, height: window.innerHeight },
+          );
+          clamped = clampTranslate(focal.x, focal.y, nextScale);
+        } else {
+          clamped = clampTranslate(t.x, t.y, nextScale);
+        }
 
         const next = { scale: nextScale, ...clamped };
         transformRef.current = next;
@@ -257,7 +279,7 @@ export function useGestureHandler(
         updateSlide(touch.clientX, touch.clientY, 6, 0.8);
       }
     },
-    [transformRef, clampTranslate, applyTransform, updateSlide],
+    [transformRef, clampTranslate, applyTransform, updateSlide, zoomToCursor],
   );
 
   const handleTouchEnd = useCallback(

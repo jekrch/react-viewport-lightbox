@@ -38,6 +38,34 @@ export function clampTranslate(
   };
 }
 
+/**
+ * Compute the pan translation that keeps the content under a focal point
+ * (cursor or pinch midpoint) anchored as the scale changes from `prevScale`
+ * to `nextScale`.
+ *
+ * The viewer scales the wrapper about the viewport center, so the on-screen
+ * position of a content point is `center + scale * (point - center) + t`.
+ * Solving "the content at `focal` before the zoom is still at `focal` after"
+ * for the new translate gives the closed form below. Pass `focal` in viewport
+ * coordinates (e.g. `clientX`/`clientY`). The result is unclamped — feed it
+ * through {@link clampTranslate} before applying.
+ */
+export function zoomToPoint(
+  prevScale: number,
+  nextScale: number,
+  prev: { x: number; y: number },
+  focal: { x: number; y: number },
+  viewport: Dims,
+): { x: number; y: number } {
+  const relX = focal.x - viewport.width / 2;
+  const relY = focal.y - viewport.height / 2;
+  const k = nextScale / prevScale;
+  return {
+    x: relX * (1 - k) + k * prev.x,
+    y: relY * (1 - k) + k * prev.y,
+  };
+}
+
 export type SlideAction = "prev" | "next" | "snap";
 
 export interface ResolveSlideArgs {

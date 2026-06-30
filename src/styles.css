@@ -183,6 +183,14 @@
 .rvl-root.rvl-visible .rvl-track {
   opacity: 1;
 }
+/* Opaque from the first frame. During a thumbnail zoom this is applied at mount
+   (before `rvl-visible`), so the image flies in crisply on the FLIP instead of
+   the opacity ramp cross-fading over the top of the expand — which otherwise
+   reads as the picture expanding twice. On a plain (non-zoom) open the class is
+   only added once `visible` flips, so it still fades in from the base opacity:0. */
+.rvl-track-visible {
+  opacity: 1;
+}
 
 .rvl-adjacent {
   position: absolute;
@@ -214,6 +222,31 @@
   border-radius: var(--rvl-radius);
   max-width: 96vw;
   will-change: transform;
+}
+
+/* Loading spinner: shown only when the opening image is slow to load. Centered
+   over the stage; the image itself is held hidden until it has decoded. */
+.rvl-spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 11;
+  pointer-events: none;
+}
+.rvl-spinner-ring {
+  display: block;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.25);
+  border-top-color: rgba(255, 255, 255, 0.9);
+  animation: rvl-spin 0.7s linear infinite;
+}
+@keyframes rvl-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Bottom nav row ------------------------------------------------------------ */

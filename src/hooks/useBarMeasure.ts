@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useLayoutEffect, useState, type RefObject } from "react";
 
 /**
  * Measures the height of the top and bottom bars so the image area
@@ -13,7 +13,10 @@ export function useBarMeasure(
   const [topBarH, setTopBarH] = useState(0);
   const [bottomBarH, setBottomBarH] = useState(0);
 
-  useEffect(() => {
+  // Measured before paint so the image is constrained to its final height on the
+  // very first frame — otherwise it lays out tall (bottomBarH = 0), then visibly
+  // shrinks once the bar is measured, which shows up as a flutter on open.
+  useLayoutEffect(() => {
     const measure = () => {
       if (topBarRef.current) setTopBarH(topBarRef.current.offsetHeight);
       if (bottomBarRef.current) setBottomBarH(bottomBarRef.current.offsetHeight);
