@@ -70,16 +70,23 @@ export function ImageViewer<TData = unknown>({
   onIndexChange,
   onNavigate,
   onClose,
+  onEscape,
   getOriginRect,
   zoom = true,
   zoomToCursor = true,
   showCounter = true,
+  showZoomControls = true,
+  disableNavigation = false,
   loop = false,
   closeOnBackdropClick = false,
   renderHeader,
   renderHeaderActions,
   renderNavStart,
   renderNavEnd,
+  navSlotPlacement = "edge",
+  navHeight,
+  navInset,
+  counterFontSize,
   renderFooter,
   renderOverlay,
   classNames,
@@ -354,16 +361,19 @@ export function ImageViewer<TData = unknown>({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // Let the consumer dismiss its own overlay first; only close when the
+        // veto hook declines to handle the key.
+        if (onEscape?.()) return;
         handleClose();
         return;
       }
-      if (displayScale > 1) return;
+      if (disableNavigation || displayScale > 1) return;
       if (e.key === "ArrowLeft" && hasPrev) navigate("prev");
       if (e.key === "ArrowRight" && hasNext) navigate("next");
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleClose, hasPrev, hasNext, displayScale, navigate]);
+  }, [handleClose, hasPrev, hasNext, displayScale, navigate, onEscape, disableNavigation]);
 
   const setContentShift = useCallback((transform: string | null, animate = true) => {
     setContentShiftState({ transform, animate });
@@ -374,6 +384,7 @@ export function ImageViewer<TData = unknown>({
     index,
     item: item!,
     total: items.length,
+    closing,
     hasPrev,
     hasNext,
     goPrev: () => navigate("prev"),
@@ -408,6 +419,15 @@ export function ImageViewer<TData = unknown>({
   const reservedH = bottomBarH + IMG_PADDING * 2;
   const imgMaxHeight = `calc(100vh - ${reservedH}px)`;
   const imgStyle: React.CSSProperties = { maxHeight: imgMaxHeight };
+
+  // Numbers become px; strings pass through (e.g. "1.5rem"). Only emit vars that
+  // were supplied so the stylesheet defaults still apply otherwise.
+  const dim = (v: number | string) => (typeof v === "number" ? `${v}px` : v);
+  const rootStyle: React.CSSProperties = {
+    ...(navHeight != null && { "--rvl-nav-height": dim(navHeight) }),
+    ...(navInset != null && { "--rvl-nav-inset": dim(navInset) }),
+    ...(counterFontSize != null && { "--rvl-counter-font-size": dim(counterFontSize) }),
+  } as React.CSSProperties;
   // Keep the image hidden (but laid out, so the zoom can still measure its box)
   // until the full source has decoded, so the entry plays from the thumbnail
   // with no full-size flash. opacity, not display, to preserve the layout box.
@@ -426,7 +446,7 @@ export function ImageViewer<TData = unknown>({
   const showAdjacent = slideActive || slideAnimating || swipeOffset !== 0;
   const adjacentOpacity = Math.min(1, Math.abs(swipeOffset) / (viewportWidth * 0.8 || 1));
 
-  const showZoomControls = zoom && !isTouchDevice;
+  const showZoomCtrls = zoom && !isTouchDevice && showZoomControls;
   const headerActions = renderHeaderActions?.(ctx);
   const navStart = renderNavStart?.(ctx);
   const navEnd = renderNavEnd?.(ctx);
@@ -441,6 +461,7 @@ export function ImageViewer<TData = unknown>({
       aria-modal="true"
       aria-label={ariaLabel ?? item.alt ?? "Image viewer"}
       tabIndex={-1}
+      style={rootStyle}
     >
       <div
         className={cx("rvl-backdrop", cn("backdrop"))}
@@ -454,7 +475,7 @@ export function ImageViewer<TData = unknown>({
         <div className="rvl-header-actions">
           {headerActions}
 
-          {showZoomControls && isZoomed && (
+          {showZoomCtrls && isZoomed && (
             <button
               type="button"
               className={cx("rvl-btn", "rvl-btn-scale", cn("button"))}
@@ -469,7 +490,7 @@ export function ImageViewer<TData = unknown>({
             </button>
           )}
 
-          {showZoomControls && (
+          {showZoomCtrls && (
             <button
               type="button"
               className={cx("rvl-btn", cn("button"))}
@@ -484,7 +505,7 @@ export function ImageViewer<TData = unknown>({
             </button>
           )}
 
-          {showZoomControls && (
+          {showZoomCtrls && (
             <button
               type="button"
               className={cx("rvl-btn", cn("button"))}
@@ -614,7 +635,7 @@ export function ImageViewer<TData = unknown>({
       <div ref={bottomBarRef} className={cx("rvl-bar", "rvl-bottom-bar", cn("bottomBar"))}>
         {showNavRow && (
           <div className="rvl-nav-row">
-            <div className="rvl-nav-inner">
+            <div className={cx("rvl-nav-inner", navSlotPlacement === "inline" && "rvl-nav-inline")}>
               {navStart != null && (
                 <div className={cx("rvl-nav-start", cn("navStart"))}>{navStart}</div>
               )}

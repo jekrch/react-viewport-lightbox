@@ -219,6 +219,24 @@ body {
   height: 1rem;
   cursor: pointer;
 }
+.pg-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--pg-fg-muted);
+  user-select: none;
+}
+.pg-range input {
+  accent-color: var(--pg-accent);
+  cursor: pointer;
+  width: 7rem;
+}
+.pg-range-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--pg-fg-faint);
+  min-width: 2.75rem;
+}
 .pg-swatches {
   display: inline-flex;
   align-items: center;

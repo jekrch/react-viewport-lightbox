@@ -66,6 +66,13 @@ export interface ViewerContext<TData = unknown> {
   item: ViewerItem<TData>;
   total: number;
 
+  /**
+   * True once the exit animation has started (after a close was requested,
+   * before `onClose` fires and the viewer unmounts). Lets overlay content fade
+   * out in step with the closing chrome instead of vanishing on unmount.
+   */
+  closing: boolean;
+
   hasPrev: boolean;
   hasNext: boolean;
   goPrev: () => void;
@@ -111,6 +118,14 @@ export interface ImageViewerProps<TData = unknown> {
   onNavigate?: (direction: "prev" | "next") => void;
   /** Called AFTER the exit animation completes. */
   onClose: () => void;
+  /**
+   * Called when the user presses Escape, before the viewer closes. Return
+   * `true` to mark the key handled and veto the default close — e.g. to dismiss
+   * a consumer overlay (drawer/graph) first, closing the viewer only on a
+   * second press. Return `false`/`undefined` to fall through to the default
+   * close.
+   */
+  onEscape?: () => boolean;
 
   /**
    * Enables a shared-element "zoom from thumbnail" open/close transition. Given
@@ -133,6 +148,20 @@ export interface ImageViewerProps<TData = unknown> {
   zoomToCursor?: boolean;
   /** Show the `index / total` counter. Default `true`. */
   showCounter?: boolean;
+  /**
+   * Show the built-in zoom in/out/reset buttons in the top bar. Independent of
+   * `zoom` (which governs the gesture behavior): set this `false` to keep
+   * zoom/pan gestures while a consumer overlay (e.g. an open graph/drawer that
+   * covers the image) temporarily owns the chrome. Default `true`.
+   */
+  showZoomControls?: boolean;
+  /**
+   * Suppress built-in arrow-key navigation (and the swipe commit) without
+   * tearing the viewer down. Useful while an overlay that has its own
+   * left/right handling is open. Does not hide the on-screen nav buttons.
+   * Default `false`.
+   */
+  disableNavigation?: boolean;
   /** Wrap around at the ends. Default `false`. */
   loop?: boolean;
   /**
@@ -155,6 +184,35 @@ export interface ImageViewerProps<TData = unknown> {
   renderNavStart?: (ctx: ViewerContext<TData>) => ReactNode;
   /** Pinned to the RIGHT edge of the nav row; mirror of `renderNavStart`. */
   renderNavEnd?: (ctx: ViewerContext<TData>) => ReactNode;
+  /**
+   * Where the `renderNavStart` / `renderNavEnd` slots sit relative to the
+   * prev/counter/next group:
+   * - `"edge"` (default): pinned to the left/right edges of the nav row (max
+   *   42rem), keeping the nav group optically centered regardless of slot width.
+   * - `"inline"`: placed directly flanking the nav group as one centered
+   *   cluster, so a details/info toggle hugs the arrows.
+   */
+  navSlotPlacement?: "edge" | "inline";
+  /**
+   * Size of the prev/next nav arrows (the bottom nav controls). A number is
+   * treated as pixels; a string is used verbatim (e.g. `"1.5rem"`). Sets the
+   * `--rvl-nav-height` custom property, so it can equally be themed in CSS.
+   * Defaults to `2.375rem` (38px) to match the comic-snaps viewer.
+   */
+  navHeight?: number | string;
+  /**
+   * Gap between the bottom nav controls and the viewport's bottom edge. A number
+   * is treated as pixels; a string is used verbatim (e.g. `"2rem"`). Sets the
+   * `--rvl-nav-inset` custom property and is floored by the device safe-area
+   * inset. Defaults to `1.3rem`.
+   */
+  navInset?: number | string;
+  /**
+   * Counter font size. By default the counter scales with `navHeight` (≈0.29×);
+   * set this to override that ratio with a fixed size. A number is treated as
+   * pixels; a string is used verbatim. Sets `--rvl-counter-font-size`.
+   */
+  counterFontSize?: number | string;
   /** Content below the nav row. */
   renderFooter?: (ctx: ViewerContext<TData>) => ReactNode;
   /** Drawers/graphs layered over the image. */

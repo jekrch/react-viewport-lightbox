@@ -14,9 +14,25 @@
   --rvl-bar-fg-faint: rgba(255, 255, 255, 0.3);
   --rvl-btn-bg: rgba(255, 255, 255, 0.1);
   --rvl-btn-bg-hover: rgba(255, 255, 255, 0.2);
+  /* Toggled (`is-active`) button fill. Left undeclared so the active rule's
+     `var(--rvl-accent)` fallback resolves at the button (picking up an accent
+     overridden on an ancestor). Override it (e.g. to a translucent
+     `color-mix(in srgb, var(--rvl-accent) 20%, transparent)`) for a subtler
+     wash; setting it to `var(--rvl-accent)` here would re-freeze it to the
+     :root accent. */
+  /* Monospace stack for the counter / zoom-scale readout. Override to theme it
+     with an app font (e.g. a custom monospace face). */
+  --rvl-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --rvl-radius: 4px;
   --rvl-anim-duration: 250ms;
   --rvl-z: 50;
+  /* Size of the bottom prev/next nav arrows. Settable via the `navHeight` prop.
+     Defaults to 38px to match the comic-snaps viewer. */
+  --rvl-nav-height: 2.375rem;
+  /* Gap between the bottom nav controls and the viewport's bottom edge. Settable
+     via the `navInset` prop; floored by the device safe-area inset. Defaults to
+     1.3rem to match the comic-snaps viewer. */
+  --rvl-nav-inset: 1.3rem;
 }
 
 /* Root overlay -------------------------------------------------------------- */
@@ -75,7 +91,7 @@
 .rvl-bottom-bar {
   bottom: 0;
   padding-top: 1rem;
-  padding-bottom: max(0.3rem, env(safe-area-inset-bottom));
+  padding-bottom: max(var(--rvl-nav-inset), env(safe-area-inset-bottom));
   opacity: 0;
   transform: translateY(0.5rem);
 }
@@ -151,11 +167,25 @@
 }
 .rvl-btn.is-active {
   color: #fff;
-  background: var(--rvl-accent);
+  background: var(--rvl-btn-bg-active, var(--rvl-accent));
 }
 .rvl-btn-scale {
   font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--rvl-font-mono);
+}
+
+/* Icons inherit their button's color so currentColor-based glyphs (e.g. lucide)
+   track the button's resting/hover/active color. The whole icon subtree is
+   covered, not just the root <svg>: a consumer's global `* { color }` rule sets
+   a color on the inner <path>/<line> nodes, and currentColor (the lucide stroke)
+   re-resolves against each node's own color — so without forcing the children to
+   inherit too, the strokes stay stuck at that color (looking permanently
+   "hovered" and the wrong hue). */
+.rvl-btn svg,
+.rvl-btn svg *,
+.rvl-nav-btn svg,
+.rvl-nav-btn svg * {
+  color: inherit;
 }
 
 /* Image stage --------------------------------------------------------------- */
@@ -294,6 +324,19 @@
   right: 0;
 }
 
+/* Inline placement (`navSlotPlacement="inline"`): the nav slots sit directly
+   flanking the prev/counter/next group as one centered cluster, so an
+   info/details toggle hugs the arrows instead of being flung to the row edges.
+   The slots become normal flex children laid out by the inner's gap. */
+.rvl-nav-inner.rvl-nav-inline {
+  gap: 0.75rem;
+}
+.rvl-nav-inline .rvl-nav-start,
+.rvl-nav-inline .rvl-nav-end {
+  position: static;
+  transform: none;
+}
+
 .rvl-nav-btn {
   display: inline-flex;
   align-items: center;
@@ -306,11 +349,18 @@
   color: rgba(255, 255, 255, 0.4);
   transition: color 0.15s ease-out;
 }
+/* Drive the arrow glyph size from the theme var so `navHeight` resizes the
+   default (and any consumer-supplied) nav icons. CSS wins over the SVG's own
+   width/height attributes. */
+.rvl-nav-btn svg {
+  width: var(--rvl-nav-height);
+  height: var(--rvl-nav-height);
+}
 .rvl-nav-btn:hover:not(:disabled) {
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.6);
 }
 .rvl-nav-btn:active:not(:disabled) {
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.8);
 }
 .rvl-nav-btn:disabled {
   color: rgba(255, 255, 255, 0.1);
@@ -324,11 +374,14 @@
 .rvl-counter {
   display: inline-block;
   text-align: center;
-  font-size: 0.6875rem;
+  /* Scale the counter with the nav arrows so the whole cluster grows together
+     (0.29 ≈ 11px at the 38px default, matching comic-snaps). Set the
+     `counterFontSize` prop / `--rvl-counter-font-size` to override the ratio. */
+  font-size: var(--rvl-counter-font-size, calc(var(--rvl-nav-height) * 0.29));
   letter-spacing: 0.02em;
   color: var(--rvl-bar-fg-muted);
   font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--rvl-font-mono);
   user-select: none;
 }
 

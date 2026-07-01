@@ -12,8 +12,15 @@ export interface CodeOptions {
   zoom: boolean;
   zoomToCursor: boolean;
   closeOnBackdropClick: boolean;
+  navHeight: number;
+  navInset: number;
   accent: string;
 }
+
+// Library defaults (38px arrows, ~21px bottom inset); only emit each prop once
+// the control has been moved off it, so the snippet stays minimal.
+const DEFAULT_NAV_HEIGHT = 38;
+const DEFAULT_NAV_INSET = 21;
 
 function buildCode(o: CodeOptions): string {
   const lines = [
@@ -44,8 +51,12 @@ function buildCode(o: CodeOptions): string {
   // zoomToCursor only applies while zoom is on — mirror the disabled control.
   if (o.zoom) lines.push(`          zoomToCursor={${o.zoomToCursor}}`);
 
+  lines.push(`          closeOnBackdropClick={${o.closeOnBackdropClick}}`);
+
+  if (o.navHeight !== DEFAULT_NAV_HEIGHT) lines.push(`          navHeight={${o.navHeight}}`);
+  if (o.navInset !== DEFAULT_NAV_INSET) lines.push(`          navInset={${o.navInset}}`);
+
   lines.push(
-    `          closeOnBackdropClick={${o.closeOnBackdropClick}}`,
     `          onIndexChange={setIndex}`,
     `          onClose={() => setOpen(false)}`,
     `        />`,

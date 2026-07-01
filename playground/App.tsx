@@ -56,6 +56,8 @@ export function App() {
   const [zoom, setZoom] = useState(true);
   const [zoomToCursor, setZoomToCursor] = useState(true);
   const [closeOnBackdropClick, setCloseOnBackdropClick] = useState(true);
+  const [navHeight, setNavHeight] = useState(38);
+  const [navInset, setNavInset] = useState(21);
   const [accent, setAccent] = useState(ACCENTS[0]);
   const [showCode, setShowCode] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -204,6 +206,28 @@ export function App() {
             />
             Show code
           </label>
+          <label className="pg-range">
+            <span>Nav size</span>
+            <input
+              type="range"
+              min={14}
+              max={56}
+              value={navHeight}
+              onChange={(e) => setNavHeight(Number(e.target.value))}
+            />
+            <span className="pg-range-value">{navHeight}px</span>
+          </label>
+          <label className="pg-range">
+            <span>Bottom space</span>
+            <input
+              type="range"
+              min={0}
+              max={64}
+              value={navInset}
+              onChange={(e) => setNavInset(Number(e.target.value))}
+            />
+            <span className="pg-range-value">{navInset}px</span>
+          </label>
           <div className="pg-swatches">
             <span>Accent</span>
             {ACCENTS.map((c) => (
@@ -228,6 +252,8 @@ export function App() {
               zoom={zoom}
               zoomToCursor={zoomToCursor}
               closeOnBackdropClick={closeOnBackdropClick}
+              navHeight={navHeight}
+              navInset={navInset}
               accent={accent}
             />
           </div>
@@ -262,6 +288,8 @@ export function App() {
           zoom={zoom}
           zoomToCursor={zoomToCursor}
           closeOnBackdropClick={closeOnBackdropClick}
+          navHeight={navHeight}
+          navInset={navInset}
           getOriginRect={(i) => thumbRefs.current[i]?.getBoundingClientRect() ?? null}
           onIndexChange={setIndex}
           onNavigate={(dir) => {
