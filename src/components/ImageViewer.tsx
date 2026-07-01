@@ -148,7 +148,20 @@ export function ImageViewer<TData = unknown>({
   const gestures = useGestureHandler(zoomPan, slide, hasPrev, hasNext, zoom, zoomToCursor);
 
   useEffect(() => {
-    setIsTouchDevice("ontouchstart" in window || navigator.maxTouchPoints > 0);
+    // Only suppress the hover-only zoom buttons on touch-PRIMARY devices
+    // (phones/tablets). Merely being touch-capable (a touchscreen laptop or
+    // 2-in-1 driven by a mouse) reports maxTouchPoints > 0, which would wrongly
+    // hide the controls even though the pointer can click them. `(hover: none)
+    // and (pointer: coarse)` matches only devices whose primary input is touch.
+    if (typeof window === "undefined" || !window.matchMedia) {
+      setIsTouchDevice("ontouchstart" in window || navigator.maxTouchPoints > 0);
+      return;
+    }
+    const mq = window.matchMedia("(hover: none) and (pointer: coarse)");
+    const update = () => setIsTouchDevice(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
   }, []);
 
   useEffect(() => {
@@ -446,7 +459,11 @@ export function ImageViewer<TData = unknown>({
   const showAdjacent = slideActive || slideAnimating || swipeOffset !== 0;
   const adjacentOpacity = Math.min(1, Math.abs(swipeOffset) / (viewportWidth * 0.8 || 1));
 
-  const showZoomCtrls = zoom && !isTouchDevice && showZoomControls;
+  // Never show the zoom controls while the image is shifted out of view (e.g. a
+  // consumer-driven details/overlay pane pushed in via setContentShift): the
+  // image isn't on screen, so zooming it makes no sense.
+  const showZoomCtrls =
+    zoom && !isTouchDevice && showZoomControls && !contentShift.transform;
   const headerActions = renderHeaderActions?.(ctx);
   const navStart = renderNavStart?.(ctx);
   const navEnd = renderNavEnd?.(ctx);

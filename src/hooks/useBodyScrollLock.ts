@@ -5,9 +5,16 @@ import { useEffect } from "react";
  * lightbox is open), so content behind the overlay can't be scrolled. To
  * prevent the content from shifting when the scrollbar disappears, the width
  * the scrollbar occupied is added back as right padding while locked. Restores
- * the previous overflow/padding values on unlock/unmount, and reference-counts
- * concurrent locks so closing one overlay doesn't release a lock held by
- * another.
+ * the previous body styles on unlock/unmount, and reference-counts concurrent
+ * locks so closing one overlay doesn't release a lock held by another.
+ *
+ * The page is pinned with `position: fixed` and `top: -scrollY` rather than a
+ * plain `overflow: hidden`. Overflow-only locking leaves the restored scroll
+ * offset at the mercy of the browser: when the page is scrolled to (or near)
+ * the bottom, hiding overflow collapses the scrollable range and the browser
+ * clamps the offset, so on unlock the content visibly "skips" to a different
+ * position. Pinning records the exact offset and restores it explicitly via
+ * `scrollTo`, so the page holds still no matter where it was scrolled.
  *
  * If the page already reserves the scrollbar's space with `scrollbar-gutter:
  * stable` on the root element, that gutter stays reserved while locked, so the
@@ -20,6 +27,10 @@ import { useEffect } from "react";
 let lockCount = 0;
 let previousOverflow = "";
 let previousPaddingRight = "";
+let previousPosition = "";
+let previousTop = "";
+let previousWidth = "";
+let lockedScrollY = 0;
 
 export function useBodyScrollLock(isLocked: boolean): void {
   useEffect(() => {
@@ -35,10 +46,20 @@ export function useBodyScrollLock(isLocked: boolean): void {
       const rootGutter = window.getComputedStyle(document.documentElement).scrollbarGutter;
       const reservesGutter = typeof rootGutter === "string" && rootGutter.includes("stable");
 
+      lockedScrollY = window.scrollY;
       previousOverflow = document.body.style.overflow;
       previousPaddingRight = document.body.style.paddingRight;
+      previousPosition = document.body.style.position;
+      previousTop = document.body.style.top;
+      previousWidth = document.body.style.width;
 
+      // Pin the page at its current offset. `width: 100%` keeps the body its
+      // normal width once it's out of flow; `overflow: hidden` guards against a
+      // stray scroll on the (now un-pinned) root.
       document.body.style.overflow = "hidden";
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${lockedScrollY}px`;
+      document.body.style.width = "100%";
       if (scrollbarWidth > 0 && !reservesGutter) {
         const currentPaddingRight =
           parseFloat(window.getComputedStyle(document.body).paddingRight) || 0;
@@ -52,6 +73,11 @@ export function useBodyScrollLock(isLocked: boolean): void {
       if (lockCount === 0) {
         document.body.style.overflow = previousOverflow;
         document.body.style.paddingRight = previousPaddingRight;
+        document.body.style.position = previousPosition;
+        document.body.style.top = previousTop;
+        document.body.style.width = previousWidth;
+        // Restore the exact offset the page was pinned at.
+        window.scrollTo(0, lockedScrollY);
       }
     };
   }, [isLocked]);

@@ -5,6 +5,9 @@ import { useBodyScrollLock } from "./useBodyScrollLock";
 afterEach(() => {
   document.body.style.overflow = "";
   document.body.style.paddingRight = "";
+  document.body.style.position = "";
+  document.body.style.top = "";
+  document.body.style.width = "";
 });
 
 describe("useBodyScrollLock", () => {
@@ -13,6 +16,17 @@ describe("useBodyScrollLock", () => {
     expect(document.body.style.overflow).toBe("hidden");
     unmount();
     expect(document.body.style.overflow).toBe("");
+  });
+
+  it("pins the body in place while locked and unpins it on unmount", () => {
+    const { unmount } = renderHook(() => useBodyScrollLock(true));
+    expect(document.body.style.position).toBe("fixed");
+    expect(document.body.style.top).toBe("0px");
+    expect(document.body.style.width).toBe("100%");
+    unmount();
+    expect(document.body.style.position).toBe("");
+    expect(document.body.style.top).toBe("");
+    expect(document.body.style.width).toBe("");
   });
 
   it("does not lock when isLocked is false", () => {
