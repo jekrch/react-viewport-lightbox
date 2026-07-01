@@ -462,8 +462,7 @@ export function ImageViewer<TData = unknown>({
   // Never show the zoom controls while the image is shifted out of view (e.g. a
   // consumer-driven details/overlay pane pushed in via setContentShift): the
   // image isn't on screen, so zooming it makes no sense.
-  const showZoomCtrls =
-    zoom && !isTouchDevice && showZoomControls && !contentShift.transform;
+  const showZoomCtrls = zoom && !isTouchDevice && showZoomControls && !contentShift.transform;
   const headerActions = renderHeaderActions?.(ctx);
   const navStart = renderNavStart?.(ctx);
   const navEnd = renderNavEnd?.(ctx);
