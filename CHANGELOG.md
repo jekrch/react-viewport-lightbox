@@ -3,6 +3,19 @@
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 
+## v0.3.1
+
+- **iOS ghost click/dblclick fix** — a tap that opens the viewer no longer lets
+  Safari's late synthesized `click`/`dblclick` re-target onto the freshly
+  mounted viewer, which previously closed it instantly or zoomed the image on
+  open. Synthesized mouse events within 700ms of open are now ignored.
+- **iOS tap-fallthrough fix** — closing the viewer with a backdrop/stage tap now
+  happens on `touchend` with `preventDefault`, so the synthesized events don't
+  fall through to a thumbnail on the page behind and leave it stuck in `:hover`.
+- **iOS text-size fix** — set `-webkit-text-size-adjust: 100%` on the root so
+  Safari stops auto-inflating text on rotation to landscape (and failing to
+  restore it on rotation back to portrait).
+
 ## v0.3.0
 
 - **`onEscape`** prop — called on Escape before the viewer closes; return `true`
