@@ -358,6 +358,24 @@ export function ImageViewer<TData = unknown>({
     setTimeout(onClose, reduce ? 0 : ANIM_MS);
   }, [onClose, getOriginRect, index, isZoomed, imgRef, imgWrapperRef]);
 
+  // Touch-tap close for the backdrop/stage. On iOS a tap that closes the viewer
+  // via the synthesized `click` also fires synthesized mouse events (mouseover /
+  // mousemove) straight after; once the backdrop unmounts those re-target to
+  // whatever element now sits under the finger — a thumbnail on the page behind —
+  // leaving it stuck in `:hover` (the tap "falls through"). Closing on touchend
+  // and calling preventDefault suppresses those synthesized events *and* the
+  // follow-up click, so the tap stays contained to the viewer. The
+  // target===currentTarget guard keeps swipes/taps on the image (which bubble up
+  // from the wrapper) from triggering a close.
+  const handleBackdropTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      if (e.target !== e.currentTarget) return;
+      e.preventDefault();
+      handleClose();
+    },
+    [handleClose],
+  );
+
   const navigate = useCallback(
     (dir: "prev" | "next") => {
       // commitSlide plays the three-slot slide and wraps the index itself when
@@ -482,6 +500,7 @@ export function ImageViewer<TData = unknown>({
       <div
         className={cx("rvl-backdrop", cn("backdrop"))}
         onClick={closeOnBackdropClick ? handleClose : undefined}
+        onTouchEnd={closeOnBackdropClick ? handleBackdropTouchEnd : undefined}
         aria-hidden="true"
       />
 
@@ -565,6 +584,7 @@ export function ImageViewer<TData = unknown>({
               }
             : undefined
         }
+        onTouchEnd={closeOnBackdropClick ? handleBackdropTouchEnd : undefined}
         style={{
           transform: contentShift.transform ?? "translateY(0)",
           // animate=false snaps with no transition (overrides the CSS transition)
