@@ -3,6 +3,33 @@
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 
+## v0.4.0
+
+- **Off-image swipe fix** — swipe and pan gestures now register across the whole
+  stage instead of only the image box, so a swipe begun in the empty (letterbox)
+  space around a differently-sized image navigates as expected rather than being
+  read as a backdrop tap that closes the viewer. Backdrop tap-to-close still
+  fires only for a stationary tap, never a swipe that happens to end over empty
+  space.
+- **Image-relative slide transition** — the swipe/commit slide now travels by the
+  image width plus its near margin instead of a full viewport width, so a
+  neighbor starts entering from the screen edge and both images move together
+  at the same speed. Fixes the incoming image visibly lagging then rushing to
+  center on letterboxed images (worst in landscape), and the far-edge blink of
+  the outgoing image as a slide settled.
+- **Smoother scroll-zoom** — each wheel tick now glides into the next with a
+  short transition instead of snapping, so continuous scrolling reads as smooth
+  zoom rather than discrete steps.
+- **Pinch-to-pan** — sliding both fingers across the screen during a pinch now
+  repositions the image, on top of the pinch scaling about the midpoint.
+- **Overlay fade on close** — `renderOverlay` content now fades out in step with
+  the rest of the chrome on close instead of popping out of existence the instant
+  the viewer unmounts.
+- **Reduced iOS flicker** — compositing-layer hints are now applied only while a
+  zoom or swipe is actually in flight and released the moment it settles, instead
+  of permanently pinning full-size image layers for the viewer's whole life,
+  which iOS could flicker.
+
 ## v0.3.1
 
 - **iOS ghost click/dblclick fix** — a tap that opens the viewer no longer lets
