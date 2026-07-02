@@ -1,7 +1,10 @@
 import { useCallback, useRef } from "react";
-import { zoomToPoint } from "./math";
-import type { ImageZoomPanState } from "./useImageZoomPan";
+import { computeZoomTransform } from "./math";
+import { MIN_SCALE, MAX_SCALE, type ImageZoomPanState } from "./useImageZoomPan";
 import type { SlideNavigationState } from "./useSlideNavigation";
+
+/** Target scale for a touch double-tap zoom (a larger step-in than desktop). */
+const DOUBLE_TAP_ZOOM_SCALE = 2.5;
 
 interface GestureHandlers {
   handlePointerDown: (e: React.PointerEvent) => void;
@@ -59,8 +62,22 @@ export function useGestureHandler(
    */
   zoomToCursor = true,
 ): GestureHandlers {
-  const { transformRef, clampTranslate, setTransform, applyTransform, resetTransform } = zoomPan;
-  const { applySlideOffset, resolveSlide, snapBack, setSlideActive, swipeOffsetRef } = slide;
+  const {
+    transformRef,
+    baseDimsRef,
+    clampTranslate,
+    setTransform,
+    applyTransform,
+    resetTransform,
+  } = zoomPan;
+  const {
+    applySlideOffset,
+    resolveSlide,
+    snapBack,
+    setSlideActive,
+    swipeOffsetRef,
+    refreshSlideDistance,
+  } = slide;
 
   const panRef = useRef<PanGesture>({
     isDragging: false,
@@ -97,6 +114,9 @@ export function useGestureHandler(
   const beginSlide = useCallback(
     (x: number, y: number) => {
       setSlideActive(true);
+      // Measure the current image now so the neighbor panels are positioned at
+      // the right (image-relative) offset from the first drag frame.
+      refreshSlideDistance();
       const sg = slideRef.current;
       sg.active = true;
       sg.startX = x;
@@ -105,7 +125,7 @@ export function useGestureHandler(
       sg.locked = false;
       sg.rejected = false;
     },
-    [setSlideActive],
+    [setSlideActive, refreshSlideDistance],
   );
 
   const updateSlide = useCallback(
@@ -253,39 +273,36 @@ export function useGestureHandler(
         const dy = e.touches[0].clientY - e.touches[1].clientY;
         const dist = Math.hypot(dx, dy);
         const ratio = dist / p.pinchStartDist;
-        const nextScale = Math.min(5, Math.max(1, p.pinchStartScale * ratio));
+        const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, p.pinchStartScale * ratio));
         const t = transformRef.current;
-        let clamped: { x: number; y: number };
-        if (nextScale <= 1) {
-          clamped = { x: 0, y: 0 };
-        } else if (zoomToCursor) {
-          const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-          const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-          const focal = zoomToPoint(
-            t.scale,
-            nextScale,
-            { x: t.x, y: t.y },
-            { x: midX, y: midY },
-            { width: window.innerWidth, height: window.innerHeight },
-          );
-          // Also translate by however far the midpoint itself moved since the
-          // last frame, so sliding both fingers across the screen repositions
-          // the image (standard pinch-to-pan behavior).
-          const prevMid = p.pinchMidpoint;
-          const panDx = prevMid ? midX - prevMid.x : 0;
-          const panDy = prevMid ? midY - prevMid.y : 0;
-          p.pinchMidpoint = { x: midX, y: midY };
-          clamped = clampTranslate(focal.x + panDx, focal.y + panDy, nextScale);
-        } else {
-          clamped = clampTranslate(t.x, t.y, nextScale);
-        }
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        // Also translate by however far the midpoint itself moved since the last
+        // frame, so sliding both fingers across the screen repositions the image
+        // (standard pinch-to-pan behavior).
+        const prevMid = p.pinchMidpoint;
+        const focalPan = {
+          x: prevMid ? midX - prevMid.x : 0,
+          y: prevMid ? midY - prevMid.y : 0,
+        };
+        p.pinchMidpoint = { x: midX, y: midY };
+        const clamped = computeZoomTransform({
+          prevScale: t.scale,
+          nextScale,
+          prev: { x: t.x, y: t.y },
+          focal: { x: midX, y: midY },
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          baseDims: baseDimsRef.current,
+          zoomToCursor,
+          focalPan,
+        });
 
         const next = { scale: nextScale, ...clamped };
         transformRef.current = next;
+        // applyTransform writes the wrapper style AND syncs displayScale, so the
+        // UI (zoom %/controls) tracks each pinch frame. We call it directly rather
+        // than setTransform to skip setTransform's redundant second setDisplayScale.
         applyTransform(next);
-        // Sync display state for UI
-        // (We set displayScale indirectly through setTransform would cause extra work,
-        // so we just write to transformRef + applyTransform, and let touchEnd sync.)
       } else if (e.touches.length === 1 && p.lastTouchPos && transformRef.current.scale > 1) {
         // Zoomed pan
         const touch = e.touches[0];
@@ -305,7 +322,7 @@ export function useGestureHandler(
         updateSlide(touch.clientX, touch.clientY, 6, 0.8);
       }
     },
-    [transformRef, clampTranslate, applyTransform, updateSlide, zoomToCursor],
+    [transformRef, baseDimsRef, clampTranslate, applyTransform, updateSlide, zoomToCursor],
   );
 
   const handleTouchEnd = useCallback(
@@ -359,7 +376,7 @@ export function useGestureHandler(
           if (transformRef.current.scale > 1) {
             resetTransform();
           } else {
-            setTransform({ scale: 2.5, x: 0, y: 0 }, true);
+            setTransform({ scale: DOUBLE_TAP_ZOOM_SCALE, x: 0, y: 0 }, true);
           }
         } else {
           lastTapRef.current = { time: now, x: touch.clientX, y: touch.clientY };

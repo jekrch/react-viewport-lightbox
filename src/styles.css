@@ -426,6 +426,14 @@
      edge slots) stays visible and on top — even while an overlay slides in. */
   z-index: 15;
   pointer-events: none;
+  /* Fade the overlay with the rest of the chrome (backdrop/bars/track) so an
+     open drawer/graph fades out on close instead of popping out of existence
+     the instant the viewer unmounts. */
+  opacity: 0;
+  transition: opacity var(--rvl-anim-duration) ease-out;
+}
+.rvl-root.rvl-visible .rvl-overlay {
+  opacity: 1;
 }
 .rvl-overlay > * {
   pointer-events: auto;
@@ -439,6 +447,7 @@
   .rvl-bar,
   .rvl-stage,
   .rvl-track,
+  .rvl-overlay,
   .rvl-btn,
   .rvl-nav-btn {
     transition-duration: 0.01ms !important;

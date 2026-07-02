@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clampTranslate, resolveSlideDirection, zoomToPoint } from "./math";
+import { clampTranslate, computeZoomTransform, resolveSlideDirection, zoomToPoint } from "./math";
 
 const viewport = { width: 1000, height: 800 };
 
@@ -79,6 +79,74 @@ describe("zoomToPoint", () => {
   it("is a no-op when the scale does not change", () => {
     const prev = { x: 30, y: -10 };
     expect(zoomToPoint(2, 2, prev, { x: 800, y: 100 }, viewport)).toEqual(prev);
+  });
+});
+
+describe("computeZoomTransform", () => {
+  const base = { width: 1000, height: 800 };
+  const center = { x: viewport.width / 2, y: viewport.height / 2 };
+
+  it("snaps to the origin when zooming back to <= 1", () => {
+    expect(
+      computeZoomTransform({
+        prevScale: 2,
+        nextScale: 1,
+        prev: { x: 120, y: -40 },
+        focal: { x: 700, y: 300 },
+        viewport,
+        baseDims: base,
+        zoomToCursor: true,
+      }),
+    ).toEqual({ x: 0, y: 0 });
+  });
+
+  it("anchors on the focal point, then clamps to the viewport", () => {
+    // Matches zoomToPoint's own math, run through clampTranslate.
+    const focal = { x: 700, y: 300 };
+    const raw = zoomToPoint(1, 2, { x: 0, y: 0 }, focal, viewport);
+    const expected = clampTranslate(raw.x, raw.y, 2, base, viewport);
+    expect(
+      computeZoomTransform({
+        prevScale: 1,
+        nextScale: 2,
+        prev: { x: 0, y: 0 },
+        focal,
+        viewport,
+        baseDims: base,
+        zoomToCursor: true,
+      }),
+    ).toEqual(expected);
+  });
+
+  it("holds the current translate (clamped) when zoomToCursor is off", () => {
+    expect(
+      computeZoomTransform({
+        prevScale: 1,
+        nextScale: 2,
+        prev: { x: 120, y: -90 },
+        focal: { x: 700, y: 300 },
+        viewport,
+        baseDims: base,
+        zoomToCursor: false,
+      }),
+    ).toEqual(clampTranslate(120, -90, 2, base, viewport));
+  });
+
+  it("adds focalPan (pinch midpoint drift) before clamping", () => {
+    const focal = center; // center focal → zoomToPoint contributes nothing
+    const focalPan = { x: 30, y: -20 };
+    expect(
+      computeZoomTransform({
+        prevScale: 1,
+        nextScale: 2,
+        prev: { x: 0, y: 0 },
+        focal,
+        viewport,
+        baseDims: base,
+        zoomToCursor: true,
+        focalPan,
+      }),
+    ).toEqual(clampTranslate(30, -20, 2, base, viewport));
   });
 });
 

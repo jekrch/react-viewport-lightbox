@@ -1,68 +1,28 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ImageViewerProps, ViewerContext, ViewerRect } from "../types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ImageViewerProps, ViewerContext } from "../types";
 import { useImageZoomPan, MIN_SCALE, MAX_SCALE } from "../hooks/useImageZoomPan";
 import { useSlideNavigation } from "../hooks/useSlideNavigation";
 import { useGestureHandler } from "../hooks/useGestureHandler";
 import { useBarMeasure } from "../hooks/useBarMeasure";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import {
+  useSharedElementZoom,
+  prefersReducedMotion,
+  ANIM_MS,
+  IMG_PADDING,
+} from "../hooks/useSharedElementZoom";
 import { defaultIcons } from "./icons";
 import { NavButton } from "./NavButton";
+import { ChromeButton } from "./ChromeButton";
 import { cx } from "./cx";
 
-const ANIM_MS = 250;
-const IMG_PADDING = 44;
 // Window after open during which synthesized mouse click/dblclick are ignored.
 // A tap (or double-tap) that opens the viewer fires iOS's synthesized `click` /
 // `dblclick` a few hundred ms LATER — by which point this viewer has mounted
 // under the finger, so they re-target onto it (the dblclick zooms the image,
 // the click hits the backdrop and closes it). See GHOST guards below.
 const GHOST_CLICK_MS = 700;
-// Decelerating ease for the shared-element zoom so it settles softly.
-const ZOOM_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
-
-function prefersReducedMotion(): boolean {
-  if (typeof window === "undefined" || !window.matchMedia) return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-/**
- * CSS transform that maps `from` (the element's current rect) onto `to`,
- * assuming a `top left` transform-origin. Used for the FLIP-style thumbnail
- * zoom: place the full image where the thumbnail is, then animate the transform
- * away so it glides into its real position.
- */
-function flipTransform(from: ViewerRect, to: ViewerRect): string {
-  const sx = to.width / from.width;
-  const sy = to.height / from.height;
-  const dx = to.left - from.left;
-  const dy = to.top - from.top;
-  return `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
-}
-
-/**
- * True when the Web Animations API is usable on `el`. jsdom (tests) and very old
- * browsers lack `Element.prototype.animate`, so callers fall back to no anim.
- */
-function canAnimate(el: HTMLElement | null): el is HTMLElement {
-  return !!el && typeof el.animate === "function";
-}
-
-/**
- * True when `rect` overlaps the current viewport at all. A thumbnail scrolled
- * out of view returns its (offscreen) rect just the same, so collapsing into it
- * would fly the image off to nowhere — callers fall back to a plain fade in that
- * case.
- */
-function isRectInViewport(rect: ViewerRect): boolean {
-  if (typeof window === "undefined") return true;
-  return (
-    rect.top < window.innerHeight &&
-    rect.top + rect.height > 0 &&
-    rect.left < window.innerWidth &&
-    rect.left + rect.width > 0
-  );
-}
 
 /**
  * Batteries-included fullscreen image viewer: zoom, pan, pinch, and swipe
@@ -101,11 +61,6 @@ export function ImageViewer<TData = unknown>({
 }: ImageViewerProps<TData>) {
   const [visible, setVisible] = useState(false);
   const [closing, setClosing] = useState(false);
-  // True only while a thumbnail FLIP collapse is animating the image back into
-  // its source. Keeps the track opaque for that flight; a close without a
-  // collapse (zoomed, reduced motion, no origin rect) leaves it false so the
-  // track fades out instead of vanishing on unmount.
-  const [collapsing, setCollapsing] = useState(false);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [contentShift, setContentShiftState] = useState<{
     transform: string | null;
@@ -157,9 +112,32 @@ export function ImageViewer<TData = unknown>({
   } = zoomPan;
 
   const slide = useSlideNavigation(items, index, onIndexChange, onNavigate, loop);
-  const { slideTrackRef, slideActive, slideAnimating, swipeOffset, commitSlide } = slide;
+  const { slideTrackRef, slideActive, slideAnimating, swipeOffset, slideDistance, commitSlide } =
+    slide;
 
   const gestures = useGestureHandler(zoomPan, slide, hasPrev, hasNext, zoom, zoomToCursor);
+
+  // Shared-element thumbnail zoom: expand out of / collapse back into the source
+  // thumbnail, plus load-gating + the delayed loading spinner. See the hook.
+  const {
+    gateEntry,
+    zoomTransition,
+    fullLoaded,
+    showSpinner,
+    collapsing,
+    onImageLoad,
+    onImageError,
+    settleEntry,
+    playCollapse,
+  } = useSharedElementZoom({
+    getOriginRect,
+    index,
+    isZoomed,
+    imgRef,
+    imgWrapperRef,
+    bottomBarRef,
+    measureBaseDims,
+  });
 
   useEffect(() => {
     // Only suppress the hover-only zoom buttons on touch-PRIMARY devices
@@ -189,188 +167,21 @@ export function ImageViewer<TData = unknown>({
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // --- Shared-element thumbnail zoom ---------------------------------------
-  // When `getOriginRect` is supplied the image expands out of its source
-  // thumbnail on open and collapses back into it on close. Driven by the Web
-  // Animations API on the <img> itself (zoom/pan owns the wrapper): WAAPI plays
-  // from an explicit start keyframe and owns the transform for the animation's
-  // duration, so React re-renders / the zoom-reset layout effect / frame timing
-  // can't clobber it mid-flight (the failure mode of a raw inline transition).
-  // The FLIP only ever scales down to ≤ 1, sidestepping the iOS upscale-clip bug
-  // noted in useImageZoomPan.
-  const zoomTransition = !!getOriginRect;
-  const reduceMotion = prefersReducedMotion();
-  // For a thumbnail zoom, hold the image hidden until its full-size source has
-  // decoded, then play the zoom from the thumbnail. Animating before the bytes
-  // are ready lets the browser paint a full-size frame first, which reads as the
-  // image "expanding twice" on the first (uncached) open.
-  const gateEntry = zoomTransition && !reduceMotion;
-
-  // Whether the opening image has finished loading + decoding.
-  const [fullLoaded, setFullLoaded] = useState(false);
-  // Set true only if the load runs long, so quick opens never flash a spinner.
-  const [showSpinner, setShowSpinner] = useState(false);
-
-  const entryStartedRef = useRef(false);
-  // Tears down the in-flight entry zoom (clears the inline transform, restores
-  // the wrapper clip, cancels the animation). Set while the zoom is playing so
-  // a close mid-flight can settle the image before measuring its collapse.
-  const entryCleanupRef = useRef<(() => void) | null>(null);
-
-  // Plays the shared-element zoom once, from the source thumbnail to the resting
-  // image box. Only ever invoked after the full image has decoded (see below),
-  // so the picture is paint-ready and the zoom can't flash a full-size frame.
-  const runZoomEntry = useCallback(() => {
-    if (entryStartedRef.current) return;
-    if (!getOriginRect || prefersReducedMotion()) return;
-    const img = imgRef.current;
-    const thumb = getOriginRect(index);
-    if (!thumb || !canAnimate(img)) return;
-
-    // Pin the image to its final constrained height before measuring. The bottom
-    // bar is measured in a post-paint effect, so on the opening frame `bottomBarH`
-    // is still 0 and the React-driven maxHeight is too tall; locking it here (read
-    // straight from the bar's DOM) keeps a late bottomBarH measurement from
-    // resizing the image mid-flight, which is what makes the open animation
-    // visibly jump / re-expand. Held for the whole flight, then matched to React's
-    // now-settled value on finish.
-    const bottomH = bottomBarRef.current?.offsetHeight ?? 0;
-    const lockedMaxHeight = `calc(100vh - ${bottomH + IMG_PADDING * 2}px)`;
-    img.style.maxHeight = lockedMaxHeight;
-
-    const imgRect = img.getBoundingClientRect();
-    if (imgRect.width === 0 || imgRect.height === 0) {
-      img.style.maxHeight = "";
-      return;
-    }
-    entryStartedRef.current = true;
-
-    const startTransform = flipTransform(imgRect, thumb);
-
-    // Pin the image to the thumbnail pose *synchronously*, before the browser
-    // can paint. On a first (uncached) open this handler fires the instant the
-    // full image decodes; a WAAPI animation only composites its first frame on
-    // the next frame, so without this inline transform the browser paints one
-    // full-size frame first — the image flashes out to full size, then zooms in
-    // again ("expands twice"). It only shows on the uncached load because the
-    // cached path starts the zoom before the first paint. React never writes
-    // `transform`, so it won't clobber this.
-    img.style.transformOrigin = "top left";
-    img.style.transform = startTransform;
-
-    // The wrapper clips to its own (centered) box; while the image is translated
-    // out to the thumbnail it would otherwise be sliced off. Lift the clip for
-    // the flight, then restore it so zoom/pan clipping still works afterwards.
-    const wrapper = imgWrapperRef.current;
-    if (wrapper) wrapper.style.overflow = "visible";
-
-    // Play from the thumbnail's box to the resting box. `fill: "forwards"` holds
-    // the resting pose at the end so the inline start transform can't flash back
-    // before cleanup swaps it out.
-    const anim = img.animate(
-      [
-        { transformOrigin: "top left", transform: startTransform },
-        { transformOrigin: "top left", transform: "none" },
-      ],
-      { duration: ANIM_MS, easing: ZOOM_EASE, fill: "forwards" },
-    );
-    const cleanup = () => {
-      // Match the inline base to the held resting pose, then release the fill:
-      // computed style stays "none" across the swap, so there's no flicker, and
-      // the image is handed cleanly back to zoom/pan.
-      img.style.transform = "";
-      img.style.transformOrigin = "";
-      if (wrapper) wrapper.style.overflow = "";
-      // Keep the height pinned to the (by now settled) final value; releasing to
-      // "" with no following render could briefly drop the constraint entirely.
-      img.style.maxHeight = lockedMaxHeight;
-      anim.cancel();
-      entryCleanupRef.current = null;
-    };
-    entryCleanupRef.current = cleanup;
-    anim.onfinish = cleanup;
-  }, [getOriginRect, index, imgRef, imgWrapperRef, bottomBarRef]);
-
-  // Mark the opening image ready once it has both loaded and decoded. `decode()`
-  // forces the decode up front so revealing the image can't flash; fall back to
-  // a plain reveal where it's unsupported or rejects (e.g. the src changed).
-  const markFullLoaded = useCallback(() => {
-    measureBaseDims();
-    const img = imgRef.current;
-    if (img && typeof img.decode === "function") {
-      img.decode().then(
-        () => setFullLoaded(true),
-        () => setFullLoaded(true),
-      );
-    } else {
-      setFullLoaded(true);
-    }
-  }, [measureBaseDims, imgRef]);
-
-  // A cached image can already be `complete` before React wires up onLoad; pick
-  // it up on mount so the open isn't stuck waiting for an event that won't fire.
-  useLayoutEffect(() => {
-    const img = imgRef.current;
-    if (img && img.complete && img.naturalWidth > 0) markFullLoaded();
-    // Mount-only: the opening image.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Once the image is decoded, play the entry zoom (a no-op for non-zoom opens,
-  // reduced motion, or a repeat call — all guarded inside runZoomEntry).
-  useLayoutEffect(() => {
-    if (fullLoaded) runZoomEntry();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fullLoaded]);
-
-  // Reveal the spinner only after the wait crosses 500ms, then clear it the
-  // moment the image is ready (or the gate no longer applies).
-  useEffect(() => {
-    if (!gateEntry || fullLoaded) {
-      setShowSpinner(false);
-      return;
-    }
-    const t = setTimeout(() => setShowSpinner(true), 500);
-    return () => clearTimeout(t);
-  }, [gateEntry, fullLoaded]);
-
   const handleClose = useCallback(() => {
     const reduce = prefersReducedMotion();
-    // Collapse back into the source thumbnail when one exists, is still on
-    // screen, and the image isn't zoomed (a zoomed image's box no longer
-    // matches the thumbnail; an off-screen thumbnail would fly to nowhere, so
-    // fall back to the plain fade).
-    const origin = !reduce && !isZoomed ? (getOriginRect?.(index) ?? null) : null;
-    const thumb = origin && isRectInViewport(origin) ? origin : null;
-    const img = imgRef.current;
-
     // If the open zoom is still playing, settle the image to its resting pose
     // first so the collapse measures the real box, not a mid-flight transform.
-    entryCleanupRef.current?.();
+    settleEntry();
 
     setClosing(true);
     setVisible(false);
 
-    if (thumb && canAnimate(img)) {
-      const imgRect = img.getBoundingClientRect();
-      // Lift the wrapper clip so the image isn't sliced as it flies back to the
-      // thumbnail; the component unmounts at onClose, so no restore is needed.
-      const wrapper = imgWrapperRef.current;
-      if (wrapper) wrapper.style.overflow = "visible";
-      setCollapsing(true);
-      // fill "forwards" holds the collapsed pose until the component unmounts.
-      img.animate(
-        [
-          { transformOrigin: "top left", transform: "none" },
-          { transformOrigin: "top left", transform: flipTransform(imgRect, thumb) },
-        ],
-        { duration: ANIM_MS, easing: ZOOM_EASE, fill: "forwards" },
-      );
-    }
-    // Otherwise the backdrop/bars/track simply fade out (default close).
+    // Collapse back into the source thumbnail when one applies; otherwise the
+    // backdrop/bars/track simply fade out (default close).
+    playCollapse();
 
     setTimeout(onClose, reduce ? 0 : ANIM_MS);
-  }, [onClose, getOriginRect, index, isZoomed, imgRef, imgWrapperRef]);
+  }, [onClose, settleEntry, playCollapse]);
 
   // Touch-tap close for the backdrop/stage. On iOS a tap that closes the viewer
   // via the synthesized `click` also fires synthesized mouse events (mouseover /
@@ -535,13 +346,12 @@ export function ImageViewer<TData = unknown>({
   const prevItem = prevIndex >= 0 ? items[prevIndex] : null;
   const nextItem = nextIndex >= 0 ? items[nextIndex] : null;
   const showAdjacent = slideActive || slideAnimating || swipeOffset !== 0;
-  const adjacentOpacity = Math.min(1, Math.abs(swipeOffset) / (viewportWidth * 0.8 || 1));
-  // On commit/snap the offset jumps straight to its target (±viewportWidth or 0),
-  // so the neighbor's opacity would snap 0→1 in one frame — a flash, worst on a
-  // fast flick in a wide (landscape) viewport where the short drag never raised
-  // the opacity much. Glide it over the slide's duration while animating; during
-  // a live drag there's no transition, so it still tracks the finger exactly.
-  const adjacentTransition = slideAnimating ? "opacity 0.28s cubic-bezier(0.2, 0, 0, 1)" : "none";
+  // Neighbors sit `slideDistance` px to the side (see measureSlideDistance),
+  // which starts their image right at the screen edge — so they slide in from
+  // the edge purely by geometry and stay fully opaque throughout, no crossfade.
+  // Falls back to the full viewport width before the first measurement lands
+  // (classic full-width slot), matching the old translateX(±100%) behavior.
+  const adjacentOffset = slideDistance || viewportWidth;
 
   // Never show the zoom controls while the image is shifted out of view (e.g. a
   // consumer-driven details/overlay pane pushed in via setContentShift): the
@@ -577,62 +387,46 @@ export function ImageViewer<TData = unknown>({
           {headerActions}
 
           {showZoomCtrls && isZoomed && (
-            <button
-              type="button"
-              className={cx("rvl-btn", "rvl-btn-scale", cn("button"))}
-              onClick={(e) => {
-                e.stopPropagation();
-                resetTransform();
-              }}
+            <ChromeButton
+              className={cx("rvl-btn-scale", cn("button"))}
+              onClick={resetTransform}
               title="Reset zoom"
-              aria-label="Reset zoom"
+              ariaLabel="Reset zoom"
             >
               {Math.round(displayScale * 100)}%
-            </button>
+            </ChromeButton>
           )}
 
           {showZoomCtrls && (
-            <button
-              type="button"
-              className={cx("rvl-btn", cn("button"))}
-              onClick={(e) => {
-                e.stopPropagation();
-                ctx.zoomIn();
-              }}
+            <ChromeButton
+              className={cn("button")}
+              onClick={ctx.zoomIn}
               title="Zoom in"
-              aria-label="Zoom in"
+              ariaLabel="Zoom in"
             >
               {mergedIcons.zoomIn}
-            </button>
+            </ChromeButton>
           )}
 
           {showZoomCtrls && (
-            <button
-              type="button"
-              className={cx("rvl-btn", cn("button"))}
-              onClick={(e) => {
-                e.stopPropagation();
-                ctx.zoomOut();
-              }}
+            <ChromeButton
+              className={cn("button")}
+              onClick={ctx.zoomOut}
               title="Zoom out"
-              aria-label="Zoom out"
+              ariaLabel="Zoom out"
             >
               {mergedIcons.zoomOut}
-            </button>
+            </ChromeButton>
           )}
 
-          <button
-            type="button"
-            className={cx("rvl-btn", cn("button"))}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleClose();
-            }}
+          <ChromeButton
+            className={cn("button")}
+            onClick={handleClose}
             title="Close (Esc)"
-            aria-label="Close"
+            ariaLabel="Close"
           >
             {mergedIcons.close}
-          </button>
+          </ChromeButton>
         </div>
       </div>
 
@@ -675,16 +469,14 @@ export function ImageViewer<TData = unknown>({
           {showAdjacent && prevItem && (
             <div
               className="rvl-adjacent"
-              // Offset by 100% of the panel's own box (== track width) rather
-              // than a `viewportWidth` px snapshot: iOS reports a stale/wrong
-              // innerWidth in landscape, and a too-small px offset leaves the
-              // panel's edge intruding from the far side. Opacity only ramps when
-              // swiping toward this neighbor (offset > 0 reveals prev); the
-              // opposite neighbor stays hidden so it can never flash in.
+              // Positioned `slideDistance` px to the left (the panel is centered
+              // in the full-width track, so this places its image just past the
+              // left screen edge) and shown only when swiping toward it (offset >
+              // 0 reveals prev); the opposite neighbor stays hidden so it can
+              // never flash in.
               style={{
-                transform: "translateX(-100%)",
-                opacity: swipeOffset > 0 ? adjacentOpacity : 0,
-                transition: adjacentTransition,
+                transform: `translateX(${-adjacentOffset}px)`,
+                opacity: swipeOffset > 0 ? 1 : 0,
               }}
             >
               <img
@@ -713,10 +505,8 @@ export function ImageViewer<TData = unknown>({
               className={cx("rvl-img", cn("image"))}
               style={imgStyle}
               draggable={false}
-              onLoad={markFullLoaded}
-              // Don't strand the open on a broken image: reveal it (skipping the
-              // zoom) so the spinner clears and the viewer stays usable.
-              onError={() => setFullLoaded(true)}
+              onLoad={onImageLoad}
+              onError={onImageError}
             />
           </div>
 
@@ -729,13 +519,13 @@ export function ImageViewer<TData = unknown>({
           {showAdjacent && nextItem && (
             <div
               className="rvl-adjacent"
-              // See prev panel above: percentage offset avoids the stale-width
-              // intrusion, and opacity only ramps when swiping toward next
-              // (offset < 0) so the prev panel never flashes on the far edge.
+              // See prev panel above: positioned `slideDistance` px to the right
+              // (image just past the right screen edge) and shown only when
+              // swiping toward next (offset < 0) so prev never flashes on the far
+              // edge.
               style={{
-                transform: "translateX(100%)",
-                opacity: swipeOffset < 0 ? adjacentOpacity : 0,
-                transition: adjacentTransition,
+                transform: `translateX(${adjacentOffset}px)`,
+                opacity: swipeOffset < 0 ? 1 : 0,
               }}
             >
               <img

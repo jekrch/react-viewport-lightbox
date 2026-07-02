@@ -66,6 +66,54 @@ export function zoomToPoint(
   };
 }
 
+export interface ComputeZoomTransformArgs {
+  prevScale: number;
+  nextScale: number;
+  /** Current translate. */
+  prev: { x: number; y: number };
+  /** Focal point in viewport coords (cursor / pinch midpoint). */
+  focal: { x: number; y: number };
+  viewport: Dims;
+  baseDims: Dims;
+  /** When true, anchor the zoom on `focal`; when false, zoom about the center. */
+  zoomToCursor: boolean;
+  /**
+   * Extra translation added to the focal-anchored result before clamping. Used
+   * by pinch to also pan by however far the midpoint drifted between frames.
+   */
+  focalPan?: { x: number; y: number };
+}
+
+/**
+ * Resolve the clamped translate for a zoom step, sharing the wheel and pinch
+ * branch logic: snaps to the origin when zooming back to ≤ 1, anchors on the
+ * focal point when `zoomToCursor`, otherwise holds the current translate — then
+ * clamps the result to the viewport.
+ */
+export function computeZoomTransform({
+  prevScale,
+  nextScale,
+  prev,
+  focal,
+  viewport,
+  baseDims,
+  zoomToCursor,
+  focalPan,
+}: ComputeZoomTransformArgs): { x: number; y: number } {
+  if (nextScale <= 1) return { x: 0, y: 0 };
+  if (zoomToCursor) {
+    const f = zoomToPoint(prevScale, nextScale, prev, focal, viewport);
+    return clampTranslate(
+      f.x + (focalPan?.x ?? 0),
+      f.y + (focalPan?.y ?? 0),
+      nextScale,
+      baseDims,
+      viewport,
+    );
+  }
+  return clampTranslate(prev.x, prev.y, nextScale, baseDims, viewport);
+}
+
 export type SlideAction = "prev" | "next" | "snap";
 
 export interface ResolveSlideArgs {

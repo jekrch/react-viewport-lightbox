@@ -1,13 +1,31 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { clampTranslate as clampTranslatePure, zoomToPoint } from "./math";
+import { clampTranslate as clampTranslatePure, computeZoomTransform } from "./math";
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 5;
+/** Target scale for a desktop double-click zoom (a modest step-in). */
+const DOUBLE_CLICK_ZOOM_SCALE = 1.8;
 
 export interface ImageTransform {
   scale: number;
   x: number;
   y: number;
+}
+
+/**
+ * Clears the inline styles the zoom applies to the wrapper, returning it to its
+ * resting (unzoomed) state. Leaves `transition` alone so callers can control
+ * whether the reset animates.
+ */
+function resetWrapperStyles(wrapper: HTMLDivElement) {
+  wrapper.style.transform = "none";
+  wrapper.style.position = "";
+  wrapper.style.inset = "";
+  wrapper.style.zIndex = "";
+  wrapper.style.backgroundColor = "";
+  wrapper.style.cursor = "";
+  // Release the compositing layer once the zoom settles back to 1.
+  wrapper.style.willChange = "";
 }
 
 export interface ImageZoomPanState {
@@ -69,14 +87,7 @@ export function useImageZoomPan(
         typeof animate === "string" ? animate : animate ? "transform 0.2s ease-out" : "none";
 
       if (t.scale <= 1) {
-        wrapper.style.transform = "none";
-        wrapper.style.position = "";
-        wrapper.style.inset = "";
-        wrapper.style.zIndex = "";
-        wrapper.style.backgroundColor = "";
-        wrapper.style.cursor = "";
-        // Release the compositing layer once the zoom settles back to 1.
-        wrapper.style.willChange = "";
+        resetWrapperStyles(wrapper);
       } else {
         wrapper.style.transform = `scale(${t.scale}) translate(${t.x / t.scale}px, ${t.y / t.scale}px)`;
         wrapper.style.position = "absolute";
@@ -114,6 +125,12 @@ export function useImageZoomPan(
     baseDimsRef.current = { width: img.offsetWidth, height: img.offsetHeight };
   }, []);
 
+  // Lazily populate base dims the first time a zoom gesture needs them (wheel /
+  // double-click can fire before the load effect has measured).
+  const ensureBaseDims = useCallback(() => {
+    if (baseDimsRef.current.width === 0) measureBaseDims();
+  }, [measureBaseDims]);
+
   /**
    * Clamp so the image edge can't pan past the viewport edge.
    */
@@ -132,13 +149,7 @@ export function useImageZoomPan(
     const wrapper = imgWrapperRef.current;
     if (wrapper) {
       wrapper.style.transition = "none";
-      wrapper.style.transform = "none";
-      wrapper.style.position = "";
-      wrapper.style.inset = "";
-      wrapper.style.zIndex = "";
-      wrapper.style.backgroundColor = "";
-      wrapper.style.cursor = "";
-      wrapper.style.willChange = "";
+      resetWrapperStyles(wrapper);
     }
     transformRef.current = { scale: 1, x: 0, y: 0 };
   }, [currentIndex, imgWrapperRef]);
@@ -157,11 +168,7 @@ export function useImageZoomPan(
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
 
-      // Ensure base dims
-      if (baseDimsRef.current.width === 0) {
-        const img = imgRef.current;
-        if (img) baseDimsRef.current = { width: img.offsetWidth, height: img.offsetHeight };
-      }
+      ensureBaseDims();
 
       const t = transformRef.current;
 
@@ -174,21 +181,15 @@ export function useImageZoomPan(
       const factor = 1 + step;
 
       const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, t.scale * factor));
-      let clamped: { x: number; y: number };
-      if (nextScale <= 1) {
-        clamped = { x: 0, y: 0 };
-      } else if (zoomToCursor) {
-        const focal = zoomToPoint(
-          t.scale,
-          nextScale,
-          { x: t.x, y: t.y },
-          { x: e.clientX, y: e.clientY },
-          { width: window.innerWidth, height: window.innerHeight },
-        );
-        clamped = clampTranslate(focal.x, focal.y, nextScale);
-      } else {
-        clamped = clampTranslate(t.x, t.y, nextScale);
-      }
+      const clamped = computeZoomTransform({
+        prevScale: t.scale,
+        nextScale,
+        prev: { x: t.x, y: t.y },
+        focal: { x: e.clientX, y: e.clientY },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        baseDims: baseDimsRef.current,
+        zoomToCursor,
+      });
       // A short transition lets each discrete wheel tick glide into the next
       // instead of snapping, which smooths out the stepped look of scroll-zoom.
       // Rapid ticks restart the transition, producing continuous motion.
@@ -197,7 +198,7 @@ export function useImageZoomPan(
 
     wrapper.addEventListener("wheel", handleWheel, { passive: false });
     return () => wrapper.removeEventListener("wheel", handleWheel);
-  }, [imgWrapperRef, setTransform, clampTranslate, enabled, zoomToCursor]);
+  }, [imgWrapperRef, setTransform, enabled, zoomToCursor, ensureBaseDims]);
 
   // Double-click toggle
 
@@ -206,19 +207,15 @@ export function useImageZoomPan(
       if (!enabled) return;
       e.stopPropagation();
 
-      // Ensure base dims
-      if (baseDimsRef.current.width === 0) {
-        const img = imgRef.current;
-        if (img) baseDimsRef.current = { width: img.offsetWidth, height: img.offsetHeight };
-      }
+      ensureBaseDims();
 
       if (transformRef.current.scale > 1) {
         resetTransform();
       } else {
-        setTransform({ scale: 1.8, x: 0, y: 0 }, true);
+        setTransform({ scale: DOUBLE_CLICK_ZOOM_SCALE, x: 0, y: 0 }, true);
       }
     },
-    [resetTransform, setTransform, enabled],
+    [resetTransform, setTransform, enabled, ensureBaseDims],
   );
 
   return {

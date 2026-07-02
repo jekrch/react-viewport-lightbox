@@ -2,6 +2,51 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { ViewerItem } from "../types";
 import { resolveSlideDirection } from "./math";
 
+/**
+ * Run `cb` exactly once when `el` finishes its transition, or after `fallbackMs`
+ * if `transitionend` never fires (an interrupted transition, or none set). No-op
+ * when `el` is null.
+ */
+/**
+ * Distance the track travels on a commit, in px. A letterboxed image sits
+ * centered in a full-width track, so revealing a neighbor one *full* track
+ * width away (translateX(±100%)) means the incoming image has to cross the
+ * empty side margin before it even reaches the screen edge — in landscape,
+ * with wide margins, it appears to lag far behind the outgoing image and then
+ * rush to center. Sliding by the image width plus the near margin instead
+ * (== vw − margin == (vw + imgW) / 2) starts the neighbor right at the screen
+ * edge, so it enters immediately and both images travel the same distance at
+ * the same speed. The neighbor panels are positioned at this same offset so the
+ * committed slide lands them exactly centered.
+ */
+function measureSlideDistance(track: HTMLElement | null): number {
+  const vw = track?.clientWidth || window.innerWidth;
+  const img = track?.querySelector<HTMLElement>(".rvl-img-wrapper > img");
+  const imgW = img?.offsetWidth ?? 0;
+  if (!imgW) return vw;
+  // Never exceed the full track width (a near-full-bleed image ⇒ ~vw, i.e. the
+  // classic full-width carousel slide).
+  return Math.min(vw, (vw + imgW) / 2);
+}
+
+/**
+ * Run `cb` exactly once when `el` finishes its transition, or after `fallbackMs`
+ * if `transitionend` never fires (an interrupted transition, or none set). No-op
+ * when `el` is null.
+ */
+function onTransitionEndOnce(el: HTMLElement | null, cb: () => void, fallbackMs: number) {
+  if (!el) return;
+  let done = false;
+  const run = () => {
+    if (done) return;
+    done = true;
+    el.removeEventListener("transitionend", run);
+    cb();
+  };
+  el.addEventListener("transitionend", run, { once: true });
+  setTimeout(run, fallbackMs);
+}
+
 export interface SlideNavigationState {
   slideTrackRef: React.RefObject<HTMLDivElement | null>;
   slideActive: boolean;
@@ -9,12 +54,19 @@ export interface SlideNavigationState {
   swipeOffset: number;
   swipeOffsetRef: React.MutableRefObject<number>;
   commitLockRef: React.MutableRefObject<boolean>;
+  /**
+   * Px distance the committed slide travels; also where the neighbor panels are
+   * positioned so they land centered. See {@link measureSlideDistance}.
+   */
+  slideDistance: number;
 
   applySlideOffset: (offset: number, animate?: boolean) => void;
   commitSlide: (direction: "prev" | "next") => void;
   snapBack: () => void;
   resolveSlide: (gestureStartTime: number) => void;
   setSlideActive: React.Dispatch<React.SetStateAction<boolean>>;
+  /** Measure the current image and refresh {@link slideDistance} (call at drag start). */
+  refreshSlideDistance: () => void;
 }
 
 /**
@@ -38,7 +90,12 @@ export function useSlideNavigation(
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [slideAnimating, setSlideAnimating] = useState(false);
   const [slideActive, setSlideActive] = useState(false);
+  const [slideDistance, setSlideDistance] = useState(0);
   const commitLockRef = useRef(false);
+
+  const refreshSlideDistance = useCallback(() => {
+    setSlideDistance(measureSlideDistance(slideTrackRef.current));
+  }, []);
 
   // With loop on, every interior position has a neighbor in both directions as
   // long as there's more than one item to wrap to.
@@ -59,19 +116,14 @@ export function useSlideNavigation(
     setSlideAnimating(true);
     applySlideOffset(0, true);
 
-    const track = slideTrackRef.current;
-    let done = false;
-    const onEnd = () => {
-      if (done) return;
-      done = true;
-      track?.removeEventListener("transitionend", onEnd);
-      setSlideAnimating(false);
-      setSlideActive(false);
-    };
-    if (track) {
-      track.addEventListener("transitionend", onEnd, { once: true });
-      setTimeout(onEnd, 350);
-    }
+    onTransitionEndOnce(
+      slideTrackRef.current,
+      () => {
+        setSlideAnimating(false);
+        setSlideActive(false);
+      },
+      350,
+    );
   }, [applySlideOffset]);
 
   const readyRef = useRef(true);
@@ -82,11 +134,13 @@ export function useSlideNavigation(
       commitLockRef.current = true;
       readyRef.current = false;
 
-      // Slide by the track's real rendered width so the revealed neighbor —
-      // positioned at translateX(±100%) of its own (track-sized) box — lands
-      // exactly centered. window.innerWidth is unreliable on iOS in landscape.
-      const vw = slideTrackRef.current?.clientWidth || window.innerWidth;
-      const targetOffset = direction === "prev" ? vw : -vw;
+      // Slide by the image-relative distance (see measureSlideDistance), and
+      // pin the neighbor panels to that same offset so the committed slide lands
+      // them exactly centered. Measured fresh here so a button/keyboard nav (no
+      // preceding drag to prime it) still gets the right distance.
+      const distance = measureSlideDistance(slideTrackRef.current);
+      setSlideDistance(distance);
+      const targetOffset = direction === "prev" ? distance : -distance;
       setSlideActive(true);
       setSlideAnimating(true);
       // Fire at the START of the slide so overlays (info drawers) can animate
@@ -96,48 +150,39 @@ export function useSlideNavigation(
       requestAnimationFrame(() => {
         applySlideOffset(targetOffset, true);
 
-        const track = slideTrackRef.current;
-        let cleaned = false;
+        onTransitionEndOnce(
+          slideTrackRef.current,
+          () => {
+            let newIndex = direction === "prev" ? currentIndex - 1 : currentIndex + 1;
+            // Wrap the index when looping so the slide that just played lands on
+            // the far end (e.g. last → first) instead of bailing out of bounds.
+            if (loop) newIndex = (newIndex + items.length) % items.length;
+            if (newIndex < 0 || newIndex >= items.length) {
+              commitLockRef.current = false;
+              return;
+            }
 
-        const cleanup = () => {
-          if (cleaned) return;
-          cleaned = true;
-          track?.removeEventListener("transitionend", onTransitionEnd);
+            const newItem = items[newIndex];
+            const preload = new Image();
+            preload.src = newItem.src;
 
-          let newIndex = direction === "prev" ? currentIndex - 1 : currentIndex + 1;
-          // Wrap the index when looping so the slide that just played lands on
-          // the far end (e.g. last → first) instead of bailing out of bounds.
-          if (loop) newIndex = (newIndex + items.length) % items.length;
-          if (newIndex < 0 || newIndex >= items.length) {
-            commitLockRef.current = false;
-            return;
-          }
+            const doNavigate = () => onNavigate(newIndex);
 
-          const newItem = items[newIndex];
-          const preload = new Image();
-          preload.src = newItem.src;
-
-          const doNavigate = () => onNavigate(newIndex);
-
-          // Add a timeout so a stalled decode can't block navigation forever
-          const timeout = setTimeout(doNavigate, 300);
-          preload
-            .decode()
-            .then(() => {
-              clearTimeout(timeout);
-              doNavigate();
-            })
-            .catch(() => {
-              clearTimeout(timeout);
-              doNavigate();
-            });
-        };
-
-        const onTransitionEnd = () => cleanup();
-        if (track) {
-          track.addEventListener("transitionend", onTransitionEnd, { once: true });
-          setTimeout(cleanup, 400);
-        }
+            // Add a timeout so a stalled decode can't block navigation forever
+            const timeout = setTimeout(doNavigate, 300);
+            preload
+              .decode()
+              .then(() => {
+                clearTimeout(timeout);
+                doNavigate();
+              })
+              .catch(() => {
+                clearTimeout(timeout);
+                doNavigate();
+              });
+          },
+          400,
+        );
       });
     },
     [applySlideOffset, currentIndex, items, onNavigate, onSlideStart, loop],
@@ -196,10 +241,12 @@ export function useSlideNavigation(
     swipeOffset,
     swipeOffsetRef,
     commitLockRef,
+    slideDistance,
     applySlideOffset,
     commitSlide,
     snapBack,
     resolveSlide,
     setSlideActive,
+    refreshSlideDistance,
   };
 }
