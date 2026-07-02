@@ -2,32 +2,47 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { ViewerItem } from "../types";
 import { resolveSlideDirection } from "./math";
 
+/** Breathing room, in px, between the screen edge and the incoming image. */
+const SLIDE_GAP = 24;
+
+/**
+ * Distance the track travels on a commit, in px; also where the neighbor panels
+ * are positioned so the committed slide lands them centered.
+ *
+ * A letterboxed image sits centered in a full-width track. Sliding by a *full*
+ * track width (translateX(±100%)) makes a wide-margin (e.g. landscape, or a
+ * tall image on a portrait phone) neighbor cross all its empty side margin
+ * before it even reaches the screen edge — it lags far behind the outgoing
+ * image and then rushes in. Sliding by only `image width + margin` fixes that
+ * but breaks when the neighbor is *wider* than the current image: sized to the
+ * narrow current image, the wide neighbor pokes into the margin and appears
+ * stuck to the current image's edge instead of emerging from the screen edge.
+ *
+ * So size the slide by the *widest* of the current image and its neighbors,
+ * plus a gap: `vw/2` (image center → screen edge) + `maxW/2` (center → the
+ * widest image's leading edge) + `SLIDE_GAP`. This guarantees the outgoing
+ * image fully clears the screen AND the incoming one always rests just past the
+ * screen edge with breathing room — never poking into the margin — whatever the
+ * aspect ratios. Unloaded neighbors report width 0 and are skipped (they're
+ * invisible until loaded; an onLoad re-measure catches them once they have a
+ * size).
+ */
+function measureSlideDistance(track: HTMLElement | null): number {
+  const vw = track?.clientWidth || window.innerWidth;
+  if (!track) return vw;
+  let maxW = 0;
+  track.querySelectorAll<HTMLElement>(".rvl-img").forEach((img) => {
+    if (img.offsetWidth > maxW) maxW = img.offsetWidth;
+  });
+  if (!maxW) return vw;
+  return Math.min(vw + SLIDE_GAP, vw / 2 + maxW / 2 + SLIDE_GAP);
+}
+
 /**
  * Run `cb` exactly once when `el` finishes its transition, or after `fallbackMs`
  * if `transitionend` never fires (an interrupted transition, or none set). No-op
  * when `el` is null.
  */
-/**
- * Distance the track travels on a commit, in px. A letterboxed image sits
- * centered in a full-width track, so revealing a neighbor one *full* track
- * width away (translateX(±100%)) means the incoming image has to cross the
- * empty side margin before it even reaches the screen edge — in landscape,
- * with wide margins, it appears to lag far behind the outgoing image and then
- * rush to center. Sliding by the image width plus the near margin instead
- * (== vw − margin == (vw + imgW) / 2) starts the neighbor right at the screen
- * edge, so it enters immediately and both images travel the same distance at
- * the same speed. The neighbor panels are positioned at this same offset so the
- * committed slide lands them exactly centered.
- */
-function measureSlideDistance(track: HTMLElement | null): number {
-  const vw = track?.clientWidth || window.innerWidth;
-  const img = track?.querySelector<HTMLElement>(".rvl-img-wrapper > img");
-  const imgW = img?.offsetWidth ?? 0;
-  if (!imgW) return vw;
-  // Never exceed the full track width (a near-full-bleed image ⇒ ~vw, i.e. the
-  // classic full-width carousel slide).
-  return Math.min(vw, (vw + imgW) / 2);
-}
 
 /**
  * Run `cb` exactly once when `el` finishes its transition, or after `fallbackMs`
@@ -96,6 +111,14 @@ export function useSlideNavigation(
   const refreshSlideDistance = useCallback(() => {
     setSlideDistance(measureSlideDistance(slideTrackRef.current));
   }, []);
+
+  // Re-measure once the neighbor panels have actually rendered (beginSlide's
+  // priming pass ran before they mounted, so it only saw the current image).
+  // useLayoutEffect lands the corrected distance before the first frame paints,
+  // so there's no visible jump from the primed estimate.
+  useLayoutEffect(() => {
+    if (slideActive) refreshSlideDistance();
+  }, [slideActive, refreshSlideDistance]);
 
   // With loop on, every interior position has a neighbor in both directions as
   // long as there's more than one item to wrap to.

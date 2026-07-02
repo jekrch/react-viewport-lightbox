@@ -112,8 +112,15 @@ export function ImageViewer<TData = unknown>({
   } = zoomPan;
 
   const slide = useSlideNavigation(items, index, onIndexChange, onNavigate, loop);
-  const { slideTrackRef, slideActive, slideAnimating, swipeOffset, slideDistance, commitSlide } =
-    slide;
+  const {
+    slideTrackRef,
+    slideActive,
+    slideAnimating,
+    swipeOffset,
+    slideDistance,
+    commitSlide,
+    refreshSlideDistance,
+  } = slide;
 
   const gestures = useGestureHandler(zoomPan, slide, hasPrev, hasNext, zoom, zoomToCursor);
 
@@ -479,9 +486,10 @@ export function ImageViewer<TData = unknown>({
           {showAdjacent && prevItem && (
             <div
               className="rvl-adjacent"
-              // Positioned `slideDistance` px to the left (the panel is centered
-              // in the full-width track, so this places its image just past the
-              // left screen edge) and shown only when swiping toward it (offset >
+              // Positioned `adjacentOffset` px to the left (see
+              // measureSlideDistance): the panel is centered in the full-width
+              // track, so this rests its image just past the left screen edge
+              // with breathing room. Shown only when swiping toward it (offset >
               // 0 reveals prev); the opposite neighbor stays hidden so it can
               // never flash in.
               style={{
@@ -496,6 +504,10 @@ export function ImageViewer<TData = unknown>({
                 className={cx("rvl-img", cn("image"))}
                 style={imgStyle}
                 draggable={false}
+                // Re-measure once this neighbor has real dimensions, so a
+                // just-loaded wider image is repositioned to emerge from the
+                // screen edge instead of poking into the margin.
+                onLoad={refreshSlideDistance}
               />
             </div>
           )}
@@ -530,7 +542,7 @@ export function ImageViewer<TData = unknown>({
           {showAdjacent && nextItem && (
             <div
               className="rvl-adjacent"
-              // See prev panel above: positioned `slideDistance` px to the right
+              // See prev panel above: positioned `adjacentOffset` px to the right
               // (image just past the right screen edge) and shown only when
               // swiping toward next (offset < 0) so prev never flashes on the far
               // edge.
@@ -543,6 +555,7 @@ export function ImageViewer<TData = unknown>({
               <img
                 src={nextItem.src}
                 alt=""
+                onLoad={refreshSlideDistance}
                 className={cx("rvl-img", cn("image"))}
                 style={imgStyle}
                 draggable={false}

@@ -114,8 +114,9 @@ export function useGestureHandler(
   const beginSlide = useCallback(
     (x: number, y: number) => {
       setSlideActive(true);
-      // Measure the current image now so the neighbor panels are positioned at
-      // the right (image-relative) offset from the first drag frame.
+      // Prime the slide distance from the current image so the neighbor panels
+      // start at roughly the right offset; the hook re-measures (now including
+      // the just-rendered neighbors) before the first frame paints.
       refreshSlideDistance();
       const sg = slideRef.current;
       sg.active = true;
