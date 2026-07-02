@@ -390,6 +390,35 @@ export function ImageViewer<TData = unknown>({
     [handleClose],
   );
 
+  // The track spans the whole viewport and owns every swipe/pan/pinch, so a
+  // gesture registers wherever it starts — including the empty space around a
+  // letterboxed image (the image wrapper only covers the picture itself). It
+  // doubles as the backdrop hit target: a stationary tap on the background
+  // closes, but a swipe that merely happens to end over empty space must not.
+  // `gestureMovedRef` tells the two apart; `target===currentTarget` limits close
+  // to the background (taps on the image bubble up from the wrapper).
+  const handleTrackTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      gestures.handleTouchEnd(e);
+      if (!closeOnBackdropClick) return;
+      if (e.target !== e.currentTarget) return;
+      if (gestures.gestureMovedRef.current) return;
+      e.preventDefault();
+      handleClose();
+    },
+    [gestures, closeOnBackdropClick, handleClose],
+  );
+
+  const handleTrackClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.target !== e.currentTarget) return;
+      if (isGhostMouseEvent()) return;
+      if (gestures.gestureMovedRef.current) return;
+      handleClose();
+    },
+    [gestures, isGhostMouseEvent, handleClose],
+  );
+
   // Mouse double-click zoom, minus the iOS ghost dblclick from the opening tap
   // (which would land here and pop the just-opened image into a zoom state).
   const handleDoubleClickGuarded = useCallback(
@@ -406,15 +435,6 @@ export function ImageViewer<TData = unknown>({
     if (isGhostMouseEvent()) return;
     handleClose();
   }, [handleClose, isGhostMouseEvent]);
-
-  const handleStageClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target !== e.currentTarget) return;
-      if (isGhostMouseEvent()) return;
-      handleClose();
-    },
-    [handleClose, isGhostMouseEvent],
-  );
 
   const navigate = useCallback(
     (dir: "prev" | "next") => {
@@ -612,13 +632,6 @@ export function ImageViewer<TData = unknown>({
 
       <div
         className="rvl-stage"
-        // The stage (z-index 10) sits over the backdrop (z-index 0) and captures
-        // its clicks, so the backdrop's own handler can't fire. Close from here
-        // when the click lands on the stage itself — the image wrapper stops
-        // propagation and the track/adjacent layers are pointer-events:none, so
-        // only genuine background clicks reach this guard.
-        onClick={closeOnBackdropClick ? handleStageClick : undefined}
-        onTouchEnd={closeOnBackdropClick ? handleBackdropTouchEnd : undefined}
         style={{
           transform: contentShift.transform ?? "translateY(0)",
           // animate=false snaps with no transition (overrides the CSS transition)
@@ -627,8 +640,24 @@ export function ImageViewer<TData = unknown>({
       >
         <div
           ref={slideTrackRef}
+          // The track fills the whole stage and owns every gesture, so a swipe
+          // registers no matter where it starts — including the empty space
+          // around a letterboxed image. It's also the backdrop close target
+          // (handleTrackTouchEnd / handleTrackClick), distinguishing a tap on the
+          // background from a swipe that merely ends there.
+          onPointerDown={gestures.handlePointerDown}
+          onPointerMove={gestures.handlePointerMove}
+          onPointerUp={gestures.handlePointerUp}
+          onPointerLeave={gestures.handlePointerUp}
+          onTouchStart={gestures.handleTouchStart}
+          onTouchMove={gestures.handleTouchMove}
+          onTouchEnd={handleTrackTouchEnd}
+          onClick={closeOnBackdropClick ? handleTrackClick : undefined}
           className={cx(
             "rvl-track",
+            // Promote the track only while a swipe is live (drag + commit/snap
+            // animation), then release the layer. Matches `showAdjacent`.
+            showAdjacent && "rvl-track-swiping",
             // During a thumbnail zoom the track is opaque from the first frame
             // (the image itself is hidden until the zoom starts), so the picture
             // flies in crisply instead of cross-fading. On close it only stays
@@ -655,15 +684,11 @@ export function ImageViewer<TData = unknown>({
           <div
             ref={imgWrapperRef}
             className="rvl-img-wrapper"
+            // Gestures live on the track (which spans the viewport); the wrapper
+            // only stops a tap/click on the image itself from bubbling up to the
+            // track's backdrop-close handler.
             onClick={(e) => e.stopPropagation()}
             onDoubleClick={handleDoubleClickGuarded}
-            onPointerDown={gestures.handlePointerDown}
-            onPointerMove={gestures.handlePointerMove}
-            onPointerUp={gestures.handlePointerUp}
-            onPointerLeave={gestures.handlePointerUp}
-            onTouchStart={gestures.handleTouchStart}
-            onTouchMove={gestures.handleTouchMove}
-            onTouchEnd={gestures.handleTouchEnd}
           >
             <img
               ref={imgRef}

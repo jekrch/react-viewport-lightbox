@@ -10,6 +10,13 @@ interface GestureHandlers {
   handleTouchStart: (e: React.TouchEvent) => void;
   handleTouchMove: (e: React.TouchEvent) => void;
   handleTouchEnd: (e: React.TouchEvent) => void;
+  /**
+   * True when the most recent gesture involved real movement (a locked/rejected
+   * swipe, a pan, or a pinch) rather than a stationary tap. Consumers use this
+   * to tell a background swipe apart from a background tap so a swipe that ends
+   * over empty space doesn't get mistaken for a tap-to-close.
+   */
+  gestureMovedRef: React.MutableRefObject<boolean>;
 }
 
 interface PanGesture {
@@ -81,6 +88,10 @@ export function useGestureHandler(
     y: 0,
   });
 
+  // True once the current gesture moves past the tap threshold (swipe/pan/pinch).
+  // Reset at the start of every fresh single-pointer gesture.
+  const gestureMovedRef = useRef(false);
+
   // Shared slide start helper
 
   const beginSlide = useCallback(
@@ -109,6 +120,9 @@ export function useGestureHandler(
         const absDx = Math.abs(dx);
         const absDy = Math.abs(dy);
         if (absDx < lockThreshold && absDy < lockThreshold) return;
+        // Moved past the tap threshold in either axis — no longer a tap, even if
+        // the drag is rejected as vertical below.
+        gestureMovedRef.current = true;
         if (absDy > absDx * angleBias) {
           sg.rejected = true;
           return;
@@ -146,6 +160,7 @@ export function useGestureHandler(
     (e: React.PointerEvent) => {
       if (e.pointerType === "touch") return;
 
+      gestureMovedRef.current = false;
       if (transformRef.current.scale > 1) {
         e.preventDefault();
         const p = panRef.current;
@@ -167,6 +182,7 @@ export function useGestureHandler(
       if (p.isDragging && transformRef.current.scale > 1) {
         const dx = e.clientX - p.pointerStart.x;
         const dy = e.clientY - p.pointerStart.y;
+        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) gestureMovedRef.current = true;
         const t = transformRef.current;
         const clamped = clampTranslate(p.translateStart.x + dx, p.translateStart.y + dy, t.scale);
         setTransform({ scale: t.scale, ...clamped });
@@ -196,6 +212,7 @@ export function useGestureHandler(
 
       if (e.touches.length === 2 && zoomEnabled) {
         // Pinch start
+        gestureMovedRef.current = true;
         const dx = e.touches[0].clientX - e.touches[1].clientX;
         const dy = e.touches[0].clientY - e.touches[1].clientY;
         p.pinchStartDist = Math.hypot(dx, dy);
@@ -212,6 +229,7 @@ export function useGestureHandler(
           snapBack();
         }
       } else if (e.touches.length === 1) {
+        gestureMovedRef.current = false;
         if (transformRef.current.scale > 1) {
           p.lastTouchPos = {
             x: e.touches[0].clientX,
@@ -266,6 +284,7 @@ export function useGestureHandler(
         const touch = e.touches[0];
         const dx = touch.clientX - p.lastTouchPos.x;
         const dy = touch.clientY - p.lastTouchPos.y;
+        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) gestureMovedRef.current = true;
         p.lastTouchPos = { x: touch.clientX, y: touch.clientY };
 
         const t = transformRef.current;
@@ -364,5 +383,6 @@ export function useGestureHandler(
     handleTouchStart,
     handleTouchMove,
     handleTouchEnd,
+    gestureMovedRef,
   };
 }

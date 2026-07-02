@@ -91,7 +91,7 @@ describe("<ImageViewer>", () => {
     act(() => {
       vi.advanceTimersByTime(800);
     });
-    fireEvent.click(document.querySelector(".rvl-stage")!);
+    fireEvent.click(document.querySelector(".rvl-track")!);
     act(() => {
       vi.advanceTimersByTime(300);
     });
@@ -109,7 +109,7 @@ describe("<ImageViewer>", () => {
       vi.advanceTimersByTime(300);
     });
     fireEvent.dblClick(document.querySelector(".rvl-img-wrapper")!);
-    fireEvent.click(document.querySelector(".rvl-stage")!);
+    fireEvent.click(document.querySelector(".rvl-track")!);
     act(() => {
       vi.advanceTimersByTime(300);
     });
@@ -121,7 +121,7 @@ describe("<ImageViewer>", () => {
   it("ignores backdrop clicks by default", () => {
     vi.useFakeTimers();
     const { onClose } = setup(0);
-    fireEvent.click(document.querySelector(".rvl-stage")!);
+    fireEvent.click(document.querySelector(".rvl-track")!);
     act(() => {
       vi.advanceTimersByTime(300);
     });

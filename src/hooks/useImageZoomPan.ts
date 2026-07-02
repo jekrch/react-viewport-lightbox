@@ -70,6 +70,8 @@ export function useImageZoomPan(
         wrapper.style.zIndex = "";
         wrapper.style.backgroundColor = "";
         wrapper.style.cursor = "";
+        // Release the compositing layer once the zoom settles back to 1.
+        wrapper.style.willChange = "";
       } else {
         wrapper.style.transform = `scale(${t.scale}) translate(${t.x / t.scale}px, ${t.y / t.scale}px)`;
         wrapper.style.position = "absolute";
@@ -77,6 +79,9 @@ export function useImageZoomPan(
         wrapper.style.zIndex = "30";
         wrapper.style.backgroundColor = "black";
         wrapper.style.cursor = "grab";
+        // Promote only while zoomed/panning; the wrapper is the element the
+        // zoom transform lives on, so this is where the hint belongs.
+        wrapper.style.willChange = "transform";
       }
 
       // Keep React state in sync so isZoomed reflects reality
@@ -128,6 +133,7 @@ export function useImageZoomPan(
       wrapper.style.zIndex = "";
       wrapper.style.backgroundColor = "";
       wrapper.style.cursor = "";
+      wrapper.style.willChange = "";
     }
     transformRef.current = { scale: 1, x: 0, y: 0 };
   }, [currentIndex, imgWrapperRef]);

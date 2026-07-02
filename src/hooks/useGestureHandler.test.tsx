@@ -78,6 +78,25 @@ describe("useGestureHandler — slide (mouse)", () => {
     expect(result.current.slide.swipeOffset).toBe(20);
   });
 
+  it("flags a moved gesture so a background swipe isn't mistaken for a tap", () => {
+    const { result } = setup({ index: 1 });
+    // A stationary press/release is a tap: the flag stays false so the backdrop
+    // close can fire.
+    act(() => result.current.gestures.handlePointerDown(mouse(100, 100)));
+    expect(result.current.gestures.gestureMovedRef.current).toBe(false);
+    // A horizontal drag past the threshold is a swipe: the flag flips true so a
+    // release over empty space navigates instead of closing.
+    act(() => result.current.gestures.handlePointerMove(mouse(60, 100)));
+    expect(result.current.gestures.gestureMovedRef.current).toBe(true);
+  });
+
+  it("flags even a rejected (vertical) drag as moved, not a tap", () => {
+    const { result } = setup({ index: 1 });
+    act(() => result.current.gestures.handlePointerDown(mouse(100, 100)));
+    act(() => result.current.gestures.handlePointerMove(mouse(102, 160)));
+    expect(result.current.gestures.gestureMovedRef.current).toBe(true);
+  });
+
   it("ignores pointer events whose type is touch", () => {
     const { result } = setup({ index: 1 });
     const touchPointer = {

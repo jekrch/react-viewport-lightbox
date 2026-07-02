@@ -157,8 +157,16 @@ export function useSlideNavigation(
     [hasPrev, hasNext, commitSlide, snapBack],
   );
 
-  // DOM resets on navigation (pre-paint)
-
+  // DOM + swipe-state resets on navigation, applied together pre-paint. The
+  // imperative track reset and the React state reset (offset/active/animating)
+  // MUST land in the same frame the new index paints. Splitting them — DOM here,
+  // state in a post-paint effect — left one painted frame where the track had
+  // already snapped to translateX(0) but swipeOffset still held the committed
+  // ±viewportWidth. In that frame showAdjacent was still true and
+  // adjacentOpacity computed to 1, so the just-left image rendered at full
+  // opacity one viewport-width to the side: a blink on the far edge, worst in
+  // landscape with wide letterbox margins. Resetting state here (a synchronous
+  // pre-paint re-render) removes that frame.
   useLayoutEffect(() => {
     const track = slideTrackRef.current;
     if (track) {
@@ -168,14 +176,13 @@ export function useSlideNavigation(
     }
     swipeOffsetRef.current = 0;
     commitLockRef.current = false;
-  }, [currentIndex]);
-
-  // React state cleanup — runs after paint
-  useEffect(() => {
     setSwipeOffset(0);
     setSlideAnimating(false);
     setSlideActive(false);
-    // Allow next commit only after React has painted the new panel
+  }, [currentIndex]);
+
+  // Allow the next commit only after React has painted the new panel.
+  useEffect(() => {
     readyRef.current = true;
   }, [currentIndex]);
 
