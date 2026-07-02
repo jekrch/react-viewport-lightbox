@@ -268,7 +268,14 @@ export function useGestureHandler(
             { x: midX, y: midY },
             { width: window.innerWidth, height: window.innerHeight },
           );
-          clamped = clampTranslate(focal.x, focal.y, nextScale);
+          // Also translate by however far the midpoint itself moved since the
+          // last frame, so sliding both fingers across the screen repositions
+          // the image (standard pinch-to-pan behavior).
+          const prevMid = p.pinchMidpoint;
+          const panDx = prevMid ? midX - prevMid.x : 0;
+          const panDy = prevMid ? midY - prevMid.y : 0;
+          p.pinchMidpoint = { x: midX, y: midY };
+          clamped = clampTranslate(focal.x + panDx, focal.y + panDy, nextScale);
         } else {
           clamped = clampTranslate(t.x, t.y, nextScale);
         }
