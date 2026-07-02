@@ -86,11 +86,35 @@ describe("<ImageViewer>", () => {
   it("closes on a backdrop click when closeOnBackdropClick is set", () => {
     vi.useFakeTimers();
     const { onClose } = setup(0, { closeOnBackdropClick: true });
+    // Past the ghost-click window that swallows the iOS synthesized click from
+    // the opening tap; a genuine close click always lands well after open.
+    act(() => {
+      vi.advanceTimersByTime(800);
+    });
     fireEvent.click(document.querySelector(".rvl-stage")!);
     act(() => {
       vi.advanceTimersByTime(300);
     });
     expect(onClose).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("ignores the iOS ghost click/dblclick synthesized by the opening tap", () => {
+    vi.useFakeTimers();
+    const { onClose } = setup(0, { closeOnBackdropClick: true });
+    // Both events arrive within the ghost window (a few hundred ms after open),
+    // re-targeted onto the freshly mounted viewer: the dblclick would zoom the
+    // image and the click would close it. Both must be swallowed.
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    fireEvent.dblClick(document.querySelector(".rvl-img-wrapper")!);
+    fireEvent.click(document.querySelector(".rvl-stage")!);
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.querySelector(".rvl-btn-scale")).toBeNull();
     vi.useRealTimers();
   });
 

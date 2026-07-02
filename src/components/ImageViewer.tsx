@@ -12,6 +12,12 @@ import { cx } from "./cx";
 
 const ANIM_MS = 250;
 const IMG_PADDING = 44;
+// Window after open during which synthesized mouse click/dblclick are ignored.
+// A tap (or double-tap) that opens the viewer fires iOS's synthesized `click` /
+// `dblclick` a few hundred ms LATER — by which point this viewer has mounted
+// under the finger, so they re-target onto it (the dblclick zooms the image,
+// the click hits the backdrop and closes it). See GHOST guards below.
+const GHOST_CLICK_MS = 700;
 // Decelerating ease for the shared-element zoom so it settles softly.
 const ZOOM_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 
@@ -105,6 +111,14 @@ export function ImageViewer<TData = unknown>({
     transform: string | null;
     animate: boolean;
   }>({ transform: null, animate: true });
+
+  // Timestamp of this open, used to drop the iOS ghost click/dblclick that the
+  // opening tap synthesizes onto the freshly mounted viewer (see GHOST_CLICK_MS).
+  const openedAtRef = useRef(Date.now());
+  const isGhostMouseEvent = useCallback(
+    () => Date.now() - openedAtRef.current < GHOST_CLICK_MS,
+    [],
+  );
 
   const containerRef = useRef<HTMLDivElement>(null);
   const imgWrapperRef = useRef<HTMLDivElement>(null);
@@ -376,6 +390,32 @@ export function ImageViewer<TData = unknown>({
     [handleClose],
   );
 
+  // Mouse double-click zoom, minus the iOS ghost dblclick from the opening tap
+  // (which would land here and pop the just-opened image into a zoom state).
+  const handleDoubleClickGuarded = useCallback(
+    (e: React.MouseEvent) => {
+      if (isGhostMouseEvent()) return;
+      handleDoubleClick(e);
+    },
+    [handleDoubleClick, isGhostMouseEvent],
+  );
+
+  // Backdrop/stage click-to-close, minus the iOS ghost click from the opening
+  // tap (which would land here and close the viewer the instant it opened).
+  const handleBackdropClick = useCallback(() => {
+    if (isGhostMouseEvent()) return;
+    handleClose();
+  }, [handleClose, isGhostMouseEvent]);
+
+  const handleStageClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.target !== e.currentTarget) return;
+      if (isGhostMouseEvent()) return;
+      handleClose();
+    },
+    [handleClose, isGhostMouseEvent],
+  );
+
   const navigate = useCallback(
     (dir: "prev" | "next") => {
       // commitSlide plays the three-slot slide and wraps the index itself when
@@ -499,7 +539,7 @@ export function ImageViewer<TData = unknown>({
     >
       <div
         className={cx("rvl-backdrop", cn("backdrop"))}
-        onClick={closeOnBackdropClick ? handleClose : undefined}
+        onClick={closeOnBackdropClick ? handleBackdropClick : undefined}
         onTouchEnd={closeOnBackdropClick ? handleBackdropTouchEnd : undefined}
         aria-hidden="true"
       />
@@ -577,13 +617,7 @@ export function ImageViewer<TData = unknown>({
         // when the click lands on the stage itself — the image wrapper stops
         // propagation and the track/adjacent layers are pointer-events:none, so
         // only genuine background clicks reach this guard.
-        onClick={
-          closeOnBackdropClick
-            ? (e) => {
-                if (e.target === e.currentTarget) handleClose();
-              }
-            : undefined
-        }
+        onClick={closeOnBackdropClick ? handleStageClick : undefined}
         onTouchEnd={closeOnBackdropClick ? handleBackdropTouchEnd : undefined}
         style={{
           transform: contentShift.transform ?? "translateY(0)",
@@ -622,7 +656,7 @@ export function ImageViewer<TData = unknown>({
             ref={imgWrapperRef}
             className="rvl-img-wrapper"
             onClick={(e) => e.stopPropagation()}
-            onDoubleClick={handleDoubleClick}
+            onDoubleClick={handleDoubleClickGuarded}
             onPointerDown={gestures.handlePointerDown}
             onPointerMove={gestures.handlePointerMove}
             onPointerUp={gestures.handlePointerUp}
