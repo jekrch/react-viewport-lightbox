@@ -669,7 +669,16 @@ export function ImageViewer<TData = unknown>({
           {showAdjacent && prevItem && (
             <div
               className="rvl-adjacent"
-              style={{ transform: `translateX(-${viewportWidth}px)`, opacity: adjacentOpacity }}
+              // Offset by 100% of the panel's own box (== track width) rather
+              // than a `viewportWidth` px snapshot: iOS reports a stale/wrong
+              // innerWidth in landscape, and a too-small px offset leaves the
+              // panel's edge intruding from the far side. Opacity only ramps when
+              // swiping toward this neighbor (offset > 0 reveals prev); the
+              // opposite neighbor stays hidden so it can never flash in.
+              style={{
+                transform: "translateX(-100%)",
+                opacity: swipeOffset > 0 ? adjacentOpacity : 0,
+              }}
             >
               <img
                 src={prevItem.src}
@@ -713,7 +722,13 @@ export function ImageViewer<TData = unknown>({
           {showAdjacent && nextItem && (
             <div
               className="rvl-adjacent"
-              style={{ transform: `translateX(${viewportWidth}px)`, opacity: adjacentOpacity }}
+              // See prev panel above: percentage offset avoids the stale-width
+              // intrusion, and opacity only ramps when swiping toward next
+              // (offset < 0) so the prev panel never flashes on the far edge.
+              style={{
+                transform: "translateX(100%)",
+                opacity: swipeOffset < 0 ? adjacentOpacity : 0,
+              }}
             >
               <img
                 src={nextItem.src}

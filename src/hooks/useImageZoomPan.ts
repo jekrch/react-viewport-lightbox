@@ -20,8 +20,12 @@ export interface ImageZoomPanState {
   baseDimsRef: React.MutableRefObject<{ width: number; height: number }>;
 
   resetTransform: () => void;
-  setTransform: (t: ImageTransform, animate?: boolean) => void;
-  applyTransform: (t: ImageTransform, animate?: boolean) => void;
+  /**
+   * `animate` may be a boolean (true = default 0.2s ease-out) or an explicit
+   * CSS transition string (e.g. a shorter one for smooth wheel-zoom stepping).
+   */
+  setTransform: (t: ImageTransform, animate?: boolean | string) => void;
+  applyTransform: (t: ImageTransform, animate?: boolean | string) => void;
   clampTranslate: (x: number, y: number, scale: number) => { x: number; y: number };
   measureBaseDims: () => void;
   handleDoubleClick: (e: React.MouseEvent) => void;
@@ -58,10 +62,11 @@ export function useImageZoomPan(
   // Core helpers
 
   const applyTransform = useCallback(
-    (t: ImageTransform, animate = false) => {
+    (t: ImageTransform, animate: boolean | string = false) => {
       const wrapper = imgWrapperRef.current;
       if (!wrapper) return;
-      wrapper.style.transition = animate ? "transform 0.2s ease-out" : "none";
+      wrapper.style.transition =
+        typeof animate === "string" ? animate : animate ? "transform 0.2s ease-out" : "none";
 
       if (t.scale <= 1) {
         wrapper.style.transform = "none";
@@ -91,7 +96,7 @@ export function useImageZoomPan(
   );
 
   const setTransform = useCallback(
-    (t: ImageTransform, animate = false) => {
+    (t: ImageTransform, animate: boolean | string = false) => {
       transformRef.current = t;
       applyTransform(t, animate);
       setDisplayScale(t.scale);
@@ -184,7 +189,10 @@ export function useImageZoomPan(
       } else {
         clamped = clampTranslate(t.x, t.y, nextScale);
       }
-      setTransform({ scale: nextScale, ...clamped });
+      // A short transition lets each discrete wheel tick glide into the next
+      // instead of snapping, which smooths out the stepped look of scroll-zoom.
+      // Rapid ticks restart the transition, producing continuous motion.
+      setTransform({ scale: nextScale, ...clamped }, "transform 0.1s ease-out");
     };
 
     wrapper.addEventListener("wheel", handleWheel, { passive: false });

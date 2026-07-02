@@ -82,7 +82,10 @@ export function useSlideNavigation(
       commitLockRef.current = true;
       readyRef.current = false;
 
-      const vw = window.innerWidth;
+      // Slide by the track's real rendered width so the revealed neighbor —
+      // positioned at translateX(±100%) of its own (track-sized) box — lands
+      // exactly centered. window.innerWidth is unreliable on iOS in landscape.
+      const vw = slideTrackRef.current?.clientWidth || window.innerWidth;
       const targetOffset = direction === "prev" ? vw : -vw;
       setSlideActive(true);
       setSlideAnimating(true);
