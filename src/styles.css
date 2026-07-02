@@ -48,6 +48,10 @@
   background-color: rgba(0, 0, 0, 0);
   transition: background-color var(--rvl-anim-duration) ease-out;
   -webkit-tap-highlight-color: transparent;
+  /* Prevent iOS Safari from auto-inflating text on rotation to landscape and
+     failing to restore it on rotation back to portrait. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 .rvl-root.rvl-visible {
   background-color: var(--rvl-overlay-bg);
