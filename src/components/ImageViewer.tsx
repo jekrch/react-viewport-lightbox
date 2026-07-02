@@ -536,6 +536,12 @@ export function ImageViewer<TData = unknown>({
   const nextItem = nextIndex >= 0 ? items[nextIndex] : null;
   const showAdjacent = slideActive || slideAnimating || swipeOffset !== 0;
   const adjacentOpacity = Math.min(1, Math.abs(swipeOffset) / (viewportWidth * 0.8 || 1));
+  // On commit/snap the offset jumps straight to its target (±viewportWidth or 0),
+  // so the neighbor's opacity would snap 0→1 in one frame — a flash, worst on a
+  // fast flick in a wide (landscape) viewport where the short drag never raised
+  // the opacity much. Glide it over the slide's duration while animating; during
+  // a live drag there's no transition, so it still tracks the finger exactly.
+  const adjacentTransition = slideAnimating ? "opacity 0.28s cubic-bezier(0.2, 0, 0, 1)" : "none";
 
   // Never show the zoom controls while the image is shifted out of view (e.g. a
   // consumer-driven details/overlay pane pushed in via setContentShift): the
@@ -678,6 +684,7 @@ export function ImageViewer<TData = unknown>({
               style={{
                 transform: "translateX(-100%)",
                 opacity: swipeOffset > 0 ? adjacentOpacity : 0,
+                transition: adjacentTransition,
               }}
             >
               <img
@@ -728,6 +735,7 @@ export function ImageViewer<TData = unknown>({
               style={{
                 transform: "translateX(100%)",
                 opacity: swipeOffset < 0 ? adjacentOpacity : 0,
+                transition: adjacentTransition,
               }}
             >
               <img
