@@ -347,11 +347,21 @@ export function ImageViewer<TData = unknown>({
   const nextItem = nextIndex >= 0 ? items[nextIndex] : null;
   const showAdjacent = slideActive || slideAnimating || swipeOffset !== 0;
   // Neighbors sit `slideDistance` px to the side (see measureSlideDistance),
-  // which starts their image right at the screen edge — so they slide in from
-  // the edge purely by geometry and stay fully opaque throughout, no crossfade.
-  // Falls back to the full viewport width before the first measurement lands
-  // (classic full-width slot), matching the old translateX(±100%) behavior.
+  // which starts their image right at the screen edge, so they slide in from the
+  // edge as the track shifts. Falls back to the full viewport width before the
+  // first measurement lands (classic full-width slot), matching the old
+  // translateX(±100%) behavior.
   const adjacentOffset = slideDistance || viewportWidth;
+  // The incoming neighbor also fades in as it's dragged toward center: opacity
+  // ramps with the swipe distance and clamps to 1 shortly before the slide
+  // fully commits, so the reveal is a crossfade rather than a hard slide.
+  const adjacentOpacity = Math.min(1, Math.abs(swipeOffset) / (adjacentOffset * 0.8 || 1));
+  // On commit/snap the offset jumps straight to its target, so the opacity would
+  // snap 0→1 in one frame — a flash, worst on a fast flick that never dragged
+  // far enough to raise the opacity much. Glide it over the slide's duration
+  // while animating; during a live drag there's no transition, so it still
+  // tracks the finger exactly.
+  const adjacentTransition = slideAnimating ? "opacity 0.28s cubic-bezier(0.2, 0, 0, 1)" : "none";
 
   // Never show the zoom controls while the image is shifted out of view (e.g. a
   // consumer-driven details/overlay pane pushed in via setContentShift): the
@@ -476,7 +486,8 @@ export function ImageViewer<TData = unknown>({
               // never flash in.
               style={{
                 transform: `translateX(${-adjacentOffset}px)`,
-                opacity: swipeOffset > 0 ? 1 : 0,
+                opacity: swipeOffset > 0 ? adjacentOpacity : 0,
+                transition: adjacentTransition,
               }}
             >
               <img
@@ -525,7 +536,8 @@ export function ImageViewer<TData = unknown>({
               // edge.
               style={{
                 transform: `translateX(${adjacentOffset}px)`,
-                opacity: swipeOffset < 0 ? 1 : 0,
+                opacity: swipeOffset < 0 ? adjacentOpacity : 0,
+                transition: adjacentTransition,
               }}
             >
               <img
