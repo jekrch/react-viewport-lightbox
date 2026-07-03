@@ -184,11 +184,7 @@ export function ImageViewer<TData = unknown>({
       : hasPrev
         ? items[items.length - 1]?.src
         : undefined;
-    const nextSrc = hasNextLinear
-      ? items[index + 1]?.src
-      : hasNext
-        ? items[0]?.src
-        : undefined;
+    const nextSrc = hasNextLinear ? items[index + 1]?.src : hasNext ? items[0]?.src : undefined;
 
     const loaders: HTMLImageElement[] = [];
     for (const src of [prevSrc, nextSrc]) {

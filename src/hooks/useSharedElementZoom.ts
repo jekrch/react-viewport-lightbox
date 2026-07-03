@@ -66,7 +66,10 @@ function resolveOrigin(src: HTMLElement | ViewerRect | null | undefined): Resolv
   if (!src) return null;
   if (typeof (src as HTMLElement).getBoundingClientRect === "function") {
     const el = src as HTMLElement;
-    return { rect: el.getBoundingClientRect(), radius: parseFloat(getComputedStyle(el).borderRadius) || 0 };
+    return {
+      rect: el.getBoundingClientRect(),
+      radius: parseFloat(getComputedStyle(el).borderRadius) || 0,
+    };
   }
   return { rect: src as ViewerRect, radius: null };
 }
