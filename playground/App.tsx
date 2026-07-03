@@ -290,7 +290,7 @@ export function App() {
           closeOnBackdropClick={closeOnBackdropClick}
           navHeight={navHeight}
           navInset={navInset}
-          getOriginRect={(i) => thumbRefs.current[i]?.getBoundingClientRect() ?? null}
+          getOrigin={(i) => thumbRefs.current[i]}
           onIndexChange={setIndex}
           onNavigate={(dir) => {
             if (drawerOpen) {

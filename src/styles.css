@@ -45,26 +45,32 @@
   align-items: center;
   justify-content: center;
   touch-action: none;
-  background-color: rgba(0, 0, 0, 0);
-  transition: background-color var(--rvl-anim-duration) ease-out;
+  /* The dark fill lives on .rvl-backdrop and fades via opacity (see below), not
+     as a background-color transition on this fixed root: iOS Safari fails to
+     repaint an animating background-color in the bottom safe-area band (the
+     home-indicator / control area), so that strip holds its color through the
+     close and then snaps off when the element unmounts. An opacity fade on the
+     backdrop layer is composited edge-to-edge, safe area included. */
+  background-color: transparent;
   -webkit-tap-highlight-color: transparent;
   /* Prevent iOS Safari from auto-inflating text on rotation to landscape and
      failing to restore it on rotation back to portrait. */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
-.rvl-root.rvl-visible {
-  background-color: var(--rvl-overlay-bg);
-}
-
 .rvl-backdrop {
   position: absolute;
   inset: 0;
   z-index: 0;
+  background-color: var(--rvl-overlay-bg);
   backdrop-filter: blur(0);
-  transition: backdrop-filter var(--rvl-anim-duration) ease-out;
+  opacity: 0;
+  transition:
+    opacity var(--rvl-anim-duration) ease-out,
+    backdrop-filter var(--rvl-anim-duration) ease-out;
 }
 .rvl-root.rvl-visible .rvl-backdrop {
+  opacity: 1;
   backdrop-filter: blur(4px);
 }
 

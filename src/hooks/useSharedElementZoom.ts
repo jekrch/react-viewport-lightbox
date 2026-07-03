@@ -36,6 +36,42 @@ function canAnimate(el: HTMLElement | null): el is HTMLElement {
 }
 
 /**
+ * The `border-radius`, in the image's own coordinate space, that renders as
+ * `radius` px once the FLIP transform has scaled the image by `sx`/`sy` into the
+ * thumbnail pose. Rendered corner size is the local radius times the axis scale,
+ * so the local value is the target pre-divided by the scale (the `x / y`
+ * elliptical form keeps it right under a non-uniform scale). Lets the image's
+ * corners morph to the thumbnail's radius across the flight instead of the
+ * rounding flattening as it shrinks and then snapping back on hand-off.
+ */
+function scaledRadius(radius: number, sx: number, sy: number): string {
+  return `${radius / sx}px / ${radius / sy}px`;
+}
+
+/** A source rect plus the corner radius to hand off to, when it's known. */
+interface ResolvedOrigin {
+  rect: ViewerRect;
+  /** Thumbnail corner radius in px when the source was an element; null for a bare rect. */
+  radius: number | null;
+}
+
+/**
+ * Normalize a `getOrigin` result. An element yields both its on-screen rect and
+ * its computed corner radius (so the zoom can match the thumbnail's rounding
+ * exactly); a bare {@link ViewerRect} yields the rect with an unknown radius
+ * (the zoom falls back to the image's own). Element-ness is duck-typed on
+ * `getBoundingClientRect` so a plain rect object never trips it.
+ */
+function resolveOrigin(src: HTMLElement | ViewerRect | null | undefined): ResolvedOrigin | null {
+  if (!src) return null;
+  if (typeof (src as HTMLElement).getBoundingClientRect === "function") {
+    const el = src as HTMLElement;
+    return { rect: el.getBoundingClientRect(), radius: parseFloat(getComputedStyle(el).borderRadius) || 0 };
+  }
+  return { rect: src as ViewerRect, radius: null };
+}
+
+/**
  * True when `rect` overlaps the current viewport at all. A thumbnail scrolled
  * out of view returns its (offscreen) rect just the same, so collapsing into it
  * would fly the image off to nowhere — callers fall back to a plain fade in that
@@ -52,7 +88,7 @@ function isRectInViewport(rect: ViewerRect): boolean {
 }
 
 export interface SharedElementZoomArgs {
-  getOriginRect?: (index: number) => ViewerRect | null;
+  getOrigin?: (index: number) => HTMLElement | ViewerRect | null;
   index: number;
   isZoomed: boolean;
   imgRef: RefObject<HTMLImageElement | null>;
@@ -84,7 +120,7 @@ export interface SharedElementZoomState {
 
 /**
  * Drives the shared-element thumbnail zoom: the image expands out of its source
- * thumbnail on open and collapses back into it on close, when `getOriginRect` is
+ * thumbnail on open and collapses back into it on close, when `getOrigin` is
  * supplied. Also owns the load-gating (hold the image hidden until decoded so
  * the zoom plays from the thumbnail with no full-size flash) and the delayed
  * loading spinner.
@@ -97,7 +133,7 @@ export interface SharedElementZoomState {
  * iOS upscale-clip bug noted in useImageZoomPan.
  */
 export function useSharedElementZoom({
-  getOriginRect,
+  getOrigin,
   index,
   isZoomed,
   imgRef,
@@ -105,7 +141,7 @@ export function useSharedElementZoom({
   bottomBarRef,
   measureBaseDims,
 }: SharedElementZoomArgs): SharedElementZoomState {
-  const zoomTransition = !!getOriginRect;
+  const zoomTransition = !!getOrigin;
   const reduceMotion = prefersReducedMotion();
   // For a thumbnail zoom, hold the image hidden until its full-size source has
   // decoded, then play the zoom from the thumbnail. Animating before the bytes
@@ -134,10 +170,11 @@ export function useSharedElementZoom({
   // so the picture is paint-ready and the zoom can't flash a full-size frame.
   const runZoomEntry = useCallback(() => {
     if (entryStartedRef.current) return;
-    if (!getOriginRect || prefersReducedMotion()) return;
+    if (!getOrigin || prefersReducedMotion()) return;
     const img = imgRef.current;
-    const thumb = getOriginRect(index);
-    if (!thumb || !canAnimate(img)) return;
+    const origin = resolveOrigin(getOrigin(index));
+    if (!origin || !canAnimate(img)) return;
+    const thumb = origin.rect;
 
     // Pin the image to its final constrained height before measuring. The bottom
     // bar is measured in a post-paint effect, so on the opening frame `bottomBarH`
@@ -158,6 +195,20 @@ export function useSharedElementZoom({
     entryStartedRef.current = true;
 
     const startTransform = flipTransform(imgRect, thumb);
+    // Morph the corners between the image's own resting radius and the
+    // thumbnail's over the flight, so the rounding tracks the zoom instead of
+    // flattening as the image shrinks (the FLIP scales border-radius down with
+    // it) and snapping back on hand-off. When the origin is an element we know
+    // the thumbnail's real radius and land exactly on it; otherwise we keep the
+    // image's own radius. The thumbnail-pose keyframe is scale-compensated so it
+    // renders at the target. No radius anywhere → no keyframes.
+    const restRadius = parseFloat(getComputedStyle(img).borderRadius) || 0;
+    const thumbRadius = origin.radius ?? restRadius;
+    const sx = thumb.width / imgRect.width;
+    const sy = thumb.height / imgRect.height;
+    const rounds = restRadius || thumbRadius;
+    const radiusFrom = rounds ? { borderRadius: scaledRadius(thumbRadius, sx, sy) } : {};
+    const radiusTo = rounds ? { borderRadius: `${restRadius}px` } : {};
 
     // Pin the image to the thumbnail pose *synchronously*, before the browser
     // can paint. On a first (uncached) open this handler fires the instant the
@@ -181,8 +232,8 @@ export function useSharedElementZoom({
     // before cleanup swaps it out.
     const anim = img.animate(
       [
-        { transformOrigin: "top left", transform: startTransform },
-        { transformOrigin: "top left", transform: "none" },
+        { transformOrigin: "top left", transform: startTransform, ...radiusFrom },
+        { transformOrigin: "top left", transform: "none", ...radiusTo },
       ],
       { duration: ANIM_MS, easing: ZOOM_EASE, fill: "forwards" },
     );
@@ -201,7 +252,7 @@ export function useSharedElementZoom({
     };
     entryCleanupRef.current = cleanup;
     anim.onfinish = cleanup;
-  }, [getOriginRect, index, imgRef, imgWrapperRef, bottomBarRef]);
+  }, [getOrigin, index, imgRef, imgWrapperRef, bottomBarRef]);
 
   // Mark the opening image ready once it has both loaded and decoded. `decode()`
   // forces the decode up front so revealing the image can't flash; fall back to
@@ -260,8 +311,8 @@ export function useSharedElementZoom({
     // screen, and the image isn't zoomed (a zoomed image's box no longer
     // matches the thumbnail; an off-screen thumbnail would fly to nowhere, so
     // fall back to the plain fade).
-    const origin = !reduce && !isZoomed ? (getOriginRect?.(index) ?? null) : null;
-    const thumb = origin && isRectInViewport(origin) ? origin : null;
+    const origin = !reduce && !isZoomed ? resolveOrigin(getOrigin?.(index)) : null;
+    const thumb = origin && isRectInViewport(origin.rect) ? origin.rect : null;
     const img = imgRef.current;
     if (!thumb || !canAnimate(img)) return;
 
@@ -271,15 +322,28 @@ export function useSharedElementZoom({
     const wrapper = imgWrapperRef.current;
     if (wrapper) wrapper.style.overflow = "visible";
     setCollapsing(true);
+    // Morph the corners from the image's own resting radius into the thumbnail's
+    // over the flight so the rounding tracks the collapse instead of flattening
+    // as the image shrinks (the FLIP scales border-radius down with it) and
+    // snapping back on hand-off. When the origin is an element we land exactly on
+    // the thumbnail's real radius; otherwise we hold the image's own. The
+    // thumbnail-pose keyframe is scale-compensated so it renders at the target.
+    const restRadius = parseFloat(getComputedStyle(img).borderRadius) || 0;
+    const thumbRadius = origin!.radius ?? restRadius;
+    const sx = thumb.width / imgRect.width;
+    const sy = thumb.height / imgRect.height;
+    const rounds = restRadius || thumbRadius;
+    const radiusFrom = rounds ? { borderRadius: `${restRadius}px` } : {};
+    const radiusTo = rounds ? { borderRadius: scaledRadius(thumbRadius, sx, sy) } : {};
     // fill "forwards" holds the collapsed pose until the component unmounts.
     img.animate(
       [
-        { transformOrigin: "top left", transform: "none" },
-        { transformOrigin: "top left", transform: flipTransform(imgRect, thumb) },
+        { transformOrigin: "top left", transform: "none", ...radiusFrom },
+        { transformOrigin: "top left", transform: flipTransform(imgRect, thumb), ...radiusTo },
       ],
       { duration: ANIM_MS, easing: ZOOM_EASE, fill: "forwards" },
     );
-  }, [getOriginRect, index, isZoomed, imgRef, imgWrapperRef]);
+  }, [getOrigin, index, isZoomed, imgRef, imgWrapperRef]);
 
   return {
     gateEntry,

@@ -3,6 +3,15 @@
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 
+## Unreleased
+
+- **`getOriginRect` → `getOrigin`** (breaking) — the shared-element zoom callback
+  now returns the source **element** (typically your ref) instead of a
+  pre-computed rect. The viewer reads the rect for you, and reads the thumbnail's
+  corner radius too, so the image's corners now morph to match the thumbnail
+  across the flight instead of snapping into shape at the end. Returning a bare
+  `ViewerRect` is still supported (falls back to the image's own corner radius).
+
 ## v0.4.0
 
 - **Off-image swipe fix** — swipe and pan gestures now register across the whole

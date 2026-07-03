@@ -37,7 +37,7 @@ export function ImageViewer<TData = unknown>({
   onNavigate,
   onClose,
   onEscape,
-  getOriginRect,
+  getOrigin,
   zoom = true,
   zoomToCursor = true,
   showCounter = true,
@@ -137,7 +137,7 @@ export function ImageViewer<TData = unknown>({
     settleEntry,
     playCollapse,
   } = useSharedElementZoom({
-    getOriginRect,
+    getOrigin,
     index,
     isZoomed,
     imgRef,
@@ -168,6 +168,51 @@ export function ImageViewer<TData = unknown>({
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  // Warm the neighbors: whenever the active index changes, kick off a background
+  // fetch of the previous and next images so a swipe/nav to them draws from the
+  // browser cache instead of waiting on the network. The adjacent <img> panels
+  // only mount mid-swipe, so without this the first frame of a button/keyboard
+  // move (or a fresh swipe) hits the wire cold. Decoded images are kept in the
+  // HTTP cache; we hold the Image objects only until they settle so an in-flight
+  // fetch isn't aborted by GC.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const prevSrc = hasPrevLinear
+      ? items[index - 1]?.src
+      : hasPrev
+        ? items[items.length - 1]?.src
+        : undefined;
+    const nextSrc = hasNextLinear
+      ? items[index + 1]?.src
+      : hasNext
+        ? items[0]?.src
+        : undefined;
+
+    const loaders: HTMLImageElement[] = [];
+    for (const src of [prevSrc, nextSrc]) {
+      if (!src) continue;
+      const img = new Image();
+      const done = () => {
+        const i = loaders.indexOf(img);
+        if (i !== -1) loaders.splice(i, 1);
+      };
+      img.onload = done;
+      img.onerror = done;
+      img.src = src;
+      loaders.push(img);
+    }
+
+    return () => {
+      // Drop refs on navigation; any completed fetch stays in the cache.
+      for (const img of loaders) {
+        img.onload = null;
+        img.onerror = null;
+      }
+      loaders.length = 0;
+    };
+  }, [items, index, hasPrev, hasNext, hasPrevLinear, hasNextLinear]);
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => setVisible(true));

@@ -221,8 +221,8 @@ describe("<ImageViewer>", () => {
 
   it("holds the image hidden until the full source loads, then reveals it", () => {
     const rect = { top: 10, left: 20, width: 100, height: 60 };
-    const getOriginRect = vi.fn().mockReturnValue(rect);
-    setup(1, { getOriginRect });
+    const getOrigin = vi.fn().mockReturnValue(rect);
+    setup(1, { getOrigin });
     const img = screen.getByAltText("Bravo");
     // Hidden while the full image loads so the zoom can play from the thumbnail
     // without a full-size flash...
@@ -235,8 +235,8 @@ describe("<ImageViewer>", () => {
   });
 
   it("reveals the image even if it fails to load", () => {
-    const getOriginRect = vi.fn().mockReturnValue({ top: 0, left: 0, width: 10, height: 10 });
-    setup(1, { getOriginRect });
+    const getOrigin = vi.fn().mockReturnValue({ top: 0, left: 0, width: 10, height: 10 });
+    setup(1, { getOrigin });
     const img = screen.getByAltText("Bravo");
     act(() => {
       fireEvent.error(img);
@@ -244,15 +244,15 @@ describe("<ImageViewer>", () => {
     expect(img.style.opacity).toBe("");
   });
 
-  it("leaves the image visible when getOriginRect is omitted", () => {
+  it("leaves the image visible when getOrigin is omitted", () => {
     setup(1);
     expect(screen.getByAltText("Bravo").style.opacity).toBe("");
   });
 
   it("shows a loading spinner only after the image is slow to load", () => {
     vi.useFakeTimers();
-    const getOriginRect = vi.fn().mockReturnValue({ top: 0, left: 0, width: 10, height: 10 });
-    setup(1, { getOriginRect });
+    const getOrigin = vi.fn().mockReturnValue({ top: 0, left: 0, width: 10, height: 10 });
+    setup(1, { getOrigin });
     // No spinner up front — quick loads shouldn't flash one.
     expect(document.querySelector(".rvl-spinner")).toBeNull();
     act(() => {
@@ -270,16 +270,34 @@ describe("<ImageViewer>", () => {
   it("collapses back into the source rect on close", () => {
     vi.useFakeTimers();
     const rect = { top: 10, left: 20, width: 100, height: 60 };
-    const getOriginRect = vi.fn().mockReturnValue(rect);
-    const { onClose } = setup(2, { getOriginRect });
-    getOriginRect.mockClear();
+    const getOrigin = vi.fn().mockReturnValue(rect);
+    const { onClose } = setup(2, { getOrigin });
+    getOrigin.mockClear();
     fireEvent.click(screen.getByLabelText("Close"));
     // The current index is queried so the image collapses into its own thumbnail.
-    expect(getOriginRect).toHaveBeenCalledWith(2);
+    expect(getOrigin).toHaveBeenCalledWith(2);
     act(() => {
       vi.advanceTimersByTime(300);
     });
     expect(onClose).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+
+  it("accepts an element from getOrigin (reads its rect + radius)", () => {
+    // The recommended usage: hand over the source element itself rather than a
+    // pre-computed rect. It's resolved via getBoundingClientRect/getComputedStyle,
+    // so the zoom still gates the image and reveals it once loaded.
+    const el = document.createElement("div");
+    const getOrigin = vi.fn().mockReturnValue(el);
+    setup(1, { getOrigin });
+    const img = screen.getByAltText("Bravo");
+    // Gated hidden until the full source loads (same as the rect path)...
+    expect(img.style.opacity).toBe("0");
+    act(() => {
+      fireEvent.load(img);
+    });
+    // ...then revealed, and the element was resolved for the entry zoom.
+    expect(getOrigin).toHaveBeenCalledWith(1);
+    expect(img.style.opacity).toBe("");
   });
 });

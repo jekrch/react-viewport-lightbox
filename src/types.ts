@@ -129,13 +129,18 @@ export interface ImageViewerProps<TData = unknown> {
 
   /**
    * Enables a shared-element "zoom from thumbnail" open/close transition. Given
-   * the active index, return the on-screen rect of the source element (e.g. the
-   * gallery thumbnail) — typically `el.getBoundingClientRect()`. The active
-   * image expands from that rect on open and collapses back into it on close.
-   * Return `null` for an index with no on-screen source (or omit the prop
-   * entirely) to fall back to the default fade. Honors reduced-motion.
+   * the active index, return the source element (e.g. the gallery thumbnail) —
+   * typically just your ref for that index. The active image expands out of it
+   * on open and collapses back into it on close, matching its corner radius so
+   * the rounding never snaps. Return `null` for an index with no on-screen
+   * source (or omit the prop entirely) to fall back to the default fade.
+   *
+   * You may also return a bare {@link ViewerRect} (e.g. a computed
+   * `getBoundingClientRect()`) when you have no element to hand over; the
+   * transition still plays, using the image's own corner radius. Honors
+   * reduced-motion.
    */
-  getOriginRect?: (index: number) => ViewerRect | null;
+  getOrigin?: (index: number) => HTMLElement | ViewerRect | null;
 
   // Behavior
   /** Enable zoom/pan (wheel, pinch, double-tap). Default `true`. */

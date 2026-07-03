@@ -83,7 +83,7 @@ animation and calls `onClose` after the exit completes.
 | `onNavigate`           | `(direction: "prev" \| "next") => void` | optional   | Fired when a slide starts (before `onIndexChange`), so overlays can animate out in sync with the image.                                                                                                                      |
 | `onClose`              | `() => void`                            | required   | Called after the exit animation completes.                                                                                                                                                                                   |
 | `onEscape`             | `() => boolean`                         | optional   | Called on Escape before the viewer closes. Return `true` to mark the key handled and veto the default close (e.g. dismiss your own overlay first); `false`/`undefined` falls through to closing.                             |
-| `getOriginRect`        | `(index: number) => ViewerRect \| null` | optional   | Enables a shared-element "zoom from thumbnail" open/close transition. Return the source element's rect (e.g. `el.getBoundingClientRect()`) for the given index, or `null` to fall back to the fade. Honors reduced-motion.   |
+| `getOrigin`            | `(index: number) => HTMLElement \| ViewerRect \| null` | optional   | Enables a shared-element "zoom from thumbnail" open/close transition. Return the source element (typically your ref) for the given index — its rect and corner radius are read for you — or a bare `ViewerRect`, or `null` to fall back to the fade. Honors reduced-motion. |
 | `zoom`                 | `boolean`                               | `true`     | Enable wheel/pinch/double-tap zoom + pan.                                                                                                                                                                                    |
 | `zoomToCursor`         | `boolean`                               | `true`     | Anchor wheel/pinch zoom on the pointer: scrolling zooms toward the cursor and a pinch zooms toward the gesture midpoint. Set `false` to zoom about the viewport center.                                                      |
 | `showCounter`          | `boolean`                               | `true`     | Show the `index / total` counter.                                                                                                                                                                                            |
@@ -161,12 +161,12 @@ const items: ViewerItem<Detail>[] = [
 
 ### Zoom from thumbnail
 
-Pass `getOriginRect` to make the viewer expand out of the clicked thumbnail on open
+Pass `getOrigin` to make the viewer expand out of the clicked thumbnail on open
 and collapse back into it on close (a shared-element transition), instead of the
-default fade. Keep a ref to each thumbnail and return its current on-screen rect for
-the given index; return `null` (or omit the prop) to fall back to the fade. It's
-called again with the active index on close, so navigating then closing collapses
-into the right thumbnail, and it honors `prefers-reduced-motion`.
+default fade. Keep a ref to each thumbnail and return the element for the given
+index; return `null` (or omit the prop) to fall back to the fade. It's called again
+with the active index on close, so navigating then closing collapses into the right
+thumbnail, and it honors `prefers-reduced-motion`.
 
 ```tsx
 const thumbs = useRef<(HTMLElement | null)[]>([]);
@@ -184,9 +184,15 @@ const thumbs = useRef<(HTMLElement | null)[]>([]);
   index={index}
   onIndexChange={setIndex}
   onClose={() => setOpen(false)}
-  getOriginRect={(i) => thumbs.current[i]?.getBoundingClientRect() ?? null}
+  getOrigin={(i) => thumbs.current[i]}
 />;
 ```
+
+Handing over the element lets the viewer read its rect **and** its corner radius,
+so the image's corners morph to match the thumbnail's — the rounding never snaps.
+If you have no element to give (e.g. a virtualized or computed position), return a
+bare `ViewerRect` instead; the transition still plays, falling back to the image's
+own corner radius (`--rvl-radius`).
 
 The transition reads most seamlessly when the thumbnail and full image share an
 aspect ratio (the thumbnail is, after all, the same picture).
