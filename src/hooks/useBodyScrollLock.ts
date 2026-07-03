@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 
 /**
  * Locks scrolling on the document body while `isLocked` is true (e.g. while the
@@ -21,6 +21,15 @@ import { useEffect } from "react";
  * padding compensation is skipped — adding it on top would shift the page by a
  * scrollbar's width (the visible "jump" it's meant to prevent).
  *
+ * Applied and released via `useLayoutEffect`, so the `position: fixed` toggle is
+ * folded into a paint rather than landing a frame late. On iOS Safari that
+ * toggle forces a full-page recomposite (and re-evaluates `loading="lazy"`
+ * thumbnails behind the overlay); running it in a plain post-paint `useEffect`
+ * let the page paint once in normal flow and then visibly reflow a frame later —
+ * the background thumbnail "blinking out and in" as the viewer opens/closes.
+ * Locking before the first paint (and releasing before the paint that starts the
+ * close, see `!closing` at the call site) keeps that reflow off-screen.
+ *
  * SSR-safe: the effect only runs in the browser, so importing this on the
  * server is a no-op.
  */
@@ -33,7 +42,7 @@ let previousWidth = "";
 let lockedScrollY = 0;
 
 export function useBodyScrollLock(isLocked: boolean): void {
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isLocked) return;
     if (typeof document === "undefined") return;
 

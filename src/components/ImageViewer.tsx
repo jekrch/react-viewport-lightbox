@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ImageViewerProps, ViewerContext } from "../types";
 import { useImageZoomPan, MIN_SCALE, MAX_SCALE } from "../hooks/useImageZoomPan";
 import { useSlideNavigation } from "../hooks/useSlideNavigation";
 import { useGestureHandler } from "../hooks/useGestureHandler";
 import { useBarMeasure } from "../hooks/useBarMeasure";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
+import { useThemeColor } from "../hooks/useThemeColor";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import {
   useSharedElementZoom,
@@ -94,7 +95,19 @@ export function ImageViewer<TData = unknown>({
   const mergedIcons = useMemo(() => ({ ...defaultIcons, ...icons }), [icons]);
   const cn = (slot: keyof NonNullable<ImageViewerProps["classNames"]>) => classNames?.[slot];
 
-  useBodyScrollLock(true);
+  // Release the scroll lock the instant the close begins — while the backdrop is
+  // still opaque — rather than at unmount (after the fade), so the `position:
+  // fixed` → static reflow it triggers on iOS Safari happens behind the cover
+  // instead of blinking the revealed page. Held for the whole open lifetime
+  // otherwise. Unlike the theme-color tint (kept to unmount so the chrome bands
+  // don't flash mid-close), the scroll reflow is masked by the backdrop, so
+  // releasing early is safe here.
+  useBodyScrollLock(!closing);
+  // Tint the iOS Safari chrome (status-bar / home-indicator bands) to the
+  // overlay color instead of letting it sample the page behind the viewer. Held
+  // for the whole mounted lifetime (like the scroll lock) so it isn't reverted
+  // mid-close-animation, which would flash the page color into those bands.
+  useThemeColor(true);
   useFocusTrap(containerRef, visible && !closing);
   const { topBarH, bottomBarH } = useBarMeasure(topBarRef, bottomBarRef, index);
 
@@ -224,12 +237,27 @@ export function ImageViewer<TData = unknown>({
     setClosing(true);
     setVisible(false);
 
-    // Collapse back into the source thumbnail when one applies; otherwise the
-    // backdrop/bars/track simply fade out (default close).
-    playCollapse();
-
+    // The collapse-into-thumbnail FLIP is played from the layout effect below,
+    // *after* the `closing` commit releases the body scroll lock: releasing
+    // `position: fixed` reflows the page (thumbnail back to its in-flow rect), so
+    // measuring the collapse target here — before that reflow — would fly the
+    // image to the locked-layout rect and then snap to the settled thumbnail on
+    // unmount. Deferring lets the FLIP target the thumbnail's final resting box.
     setTimeout(onClose, reduce ? 0 : ANIM_MS);
-  }, [onClose, settleEntry, playCollapse]);
+  }, [onClose, settleEntry]);
+
+  // Play the collapse once the close has committed and the scroll lock has
+  // released. React runs layout-effect cleanups (the lock release) before
+  // layout-effect setups, so by the time this fires the page has reflowed and
+  // `playCollapse` measures the thumbnail's settled rect. A layout effect (not a
+  // plain effect) keeps it pre-paint, so the FLIP starts on the same frame the
+  // backdrop begins fading — no gap where the un-collapsed image is visible.
+  useLayoutEffect(() => {
+    if (closing) playCollapse();
+    // `closing` only ever flips false→true (the viewer then unmounts), so this
+    // runs the collapse exactly once. Intentionally not keyed on playCollapse.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closing]);
 
   // Touch-tap close for the backdrop/stage. On iOS a tap that closes the viewer
   // via the synthesized `click` also fires synthesized mouse events (mouseover /

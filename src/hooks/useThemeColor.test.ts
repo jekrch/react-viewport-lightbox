@@ -1,0 +1,59 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { renderHook } from "@testing-library/react";
+import { useThemeColor } from "./useThemeColor";
+
+function themeMeta(): HTMLMetaElement | null {
+  return document.querySelector('meta[name="theme-color"]:not([media])');
+}
+
+afterEach(() => {
+  document.querySelectorAll('meta[name="theme-color"]').forEach((el) => el.remove());
+  document.documentElement.style.removeProperty("--rvl-theme-color");
+});
+
+describe("useThemeColor", () => {
+  it("creates a theme-color meta while active and removes it on unmount", () => {
+    expect(themeMeta()).toBeNull();
+    const { unmount } = renderHook(() => useThemeColor(true));
+    expect(themeMeta()?.getAttribute("content")).toBe("#000000");
+    unmount();
+    expect(themeMeta()).toBeNull();
+  });
+
+  it("reads the color from the --rvl-theme-color custom property", () => {
+    document.documentElement.style.setProperty("--rvl-theme-color", "#123456");
+    const { unmount } = renderHook(() => useThemeColor(true));
+    expect(themeMeta()?.getAttribute("content")).toBe("#123456");
+    unmount();
+  });
+
+  it("restores a pre-existing theme-color instead of removing it", () => {
+    const existing = document.createElement("meta");
+    existing.setAttribute("name", "theme-color");
+    existing.setAttribute("content", "#ffffff");
+    document.head.appendChild(existing);
+
+    const { unmount } = renderHook(() => useThemeColor(true));
+    expect(themeMeta()?.getAttribute("content")).toBe("#000000");
+    unmount();
+    expect(themeMeta()).toBe(existing);
+    expect(existing.getAttribute("content")).toBe("#ffffff");
+  });
+
+  it("does nothing when inactive", () => {
+    renderHook(() => useThemeColor(false));
+    expect(themeMeta()).toBeNull();
+  });
+
+  it("reference-counts concurrent activations so the last deactivation wins", () => {
+    const a = renderHook(() => useThemeColor(true));
+    const b = renderHook(() => useThemeColor(true));
+    expect(themeMeta()?.getAttribute("content")).toBe("#000000");
+
+    a.unmount();
+    expect(themeMeta()?.getAttribute("content")).toBe("#000000");
+
+    b.unmount();
+    expect(themeMeta()).toBeNull();
+  });
+});
