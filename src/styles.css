@@ -69,15 +69,23 @@
   inset: 0;
   z-index: 0;
   background-color: var(--rvl-overlay-bg);
-  backdrop-filter: blur(0);
+  /* Blur is applied statically, not transitioned. iOS Safari recomputes a
+     full-screen Gaussian blur on every frame of a `backdrop-filter` transition
+     and flickers/steps while doing it — especially when the thumbnail-zoom FLIP
+     is compositing at the same time (reads as the whole open "glitching"). The
+     value is constant here, so the layer just fades in via opacity (cheaply
+     composited edge-to-edge) with the blur carried along inside it. The
+     `-webkit-` prefix is required for reliable engagement on iOS. */
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   opacity: 0;
-  transition:
-    opacity var(--rvl-anim-duration) ease-out,
-    backdrop-filter var(--rvl-anim-duration) ease-out;
+  /* Force a compositing layer so the opacity fade is GPU-composited rather than
+     repainted (iOS flickers the safe-area band on a repainted fade). */
+  transform: translateZ(0);
+  transition: opacity var(--rvl-anim-duration) ease-out;
 }
 .rvl-root.rvl-visible .rvl-backdrop {
   opacity: 1;
-  backdrop-filter: blur(4px);
 }
 
 /* Bars ---------------------------------------------------------------------- */
