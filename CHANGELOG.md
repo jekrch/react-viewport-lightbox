@@ -3,7 +3,7 @@
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 
-## Unreleased
+## v0.5.0
 
 - **`getOriginRect` → `getOrigin`** (breaking) — the shared-element zoom callback
   now returns the source **element** (typically your ref) instead of a
@@ -11,6 +11,24 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the format.
   corner radius too, so the image's corners now morph to match the thumbnail
   across the flight instead of snapping into shape at the end. Returning a bare
   `ViewerRect` is still supported (falls back to the image's own corner radius).
+- **Neighbor preloading** — on every index change the viewer background-fetches
+  the previous and next images, so a button/keyboard move or a fresh swipe draws
+  the neighbor from the browser cache instead of hitting the network cold on its
+  first frame. Fetches are dropped on navigation; any that complete stay cached.
+- **iOS chrome tinting** — while open, the viewer overrides the document's
+  `<meta name="theme-color">` so iOS Safari tints its status-bar and
+  home-indicator bands to match the overlay instead of sampling the page behind
+  it, and restores the previous tag on close. Themeable via the new
+  `--rvl-theme-color` custom property (opaque; default `#000000`).
+- **Smoother iOS close** — the backdrop now fades via `opacity` on a composited
+  layer rather than animating `background-color`/`backdrop-filter`. Fixes the
+  bottom safe-area band holding its color through the close and snapping off at
+  unmount, and the blur stepping/flickering while the thumbnail-zoom collapse
+  composites at the same time. The collapse also now targets the thumbnail's
+  settled rect, so releasing the scroll lock mid-close no longer misaims it.
+- **Slide re-measure on load** — a letterboxed neighbor that finishes loading
+  mid-swipe is repositioned to emerge from the screen edge instead of poking into
+  the margin.
 
 ## v0.4.0
 

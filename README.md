@@ -331,6 +331,7 @@ Override any of these CSS custom properties (cascade into the viewer):
 | ------------------------------------- | ----------------- |
 | `--rvl-accent`                        | `#4c538d`         |
 | `--rvl-overlay-bg`                    | `rgba(0,0,0,0.9)` |
+| `--rvl-theme-color`                   | `#000000`         |
 | `--rvl-btn-bg` / `--rvl-btn-bg-hover` | translucent white |
 | `--rvl-radius`                        | `4px`             |
 | `--rvl-anim-duration`                 | `250ms`           |
@@ -341,6 +342,12 @@ Override any of these CSS custom properties (cascade into the viewer):
   --rvl-overlay-bg: rgba(10, 10, 20, 0.96);
 }
 ```
+
+`--rvl-theme-color` tints the iOS Safari chrome (the status-bar strip above and the
+home-indicator strip below the viewport) while the viewer is open, via a
+`<meta name="theme-color">` override that's restored on close. It must be opaque
+(`theme-color` ignores alpha), which is why it's separate from `--rvl-overlay-bg`;
+set it to match a themed overlay.
 
 For finer control, pass `classNames` to target individual slots (`root`, `backdrop`,
 `topBar`, `bottomBar`, `image`, `button`, `counter`, `navButton`, `overlay`).
