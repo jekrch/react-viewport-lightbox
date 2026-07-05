@@ -124,6 +124,22 @@ phone fetches and decodes an appropriately sized image instead of the
 full-resolution `src`. The neighbor preloads mirror them, so warming fetches the
 same resource the slide will render.
 
+```tsx
+const items: ViewerItem[] = [
+  {
+    id: "1",
+    src: "/photos/1-1600.jpg", // fallback for browsers without srcSet support
+    srcSet: "/photos/1-800.jpg 800w, /photos/1-1600.jpg 1600w, /photos/1-2400.jpg 2400w",
+    sizes: "100vw", // the image fills the viewport, so pick a candidate ~viewport-wide
+    alt: "First",
+  },
+];
+```
+
+`sizes` tells the browser how wide the image will render so it can pick the right
+`srcSet` candidate before layout. Since the viewer shows one image across the
+full viewport, `"100vw"` is the usual value.
+
 ### Per-slide details
 
 Anything richer than `alt` (a caption, credit line, tags, links) can live on the
