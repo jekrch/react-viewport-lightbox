@@ -57,6 +57,7 @@ export function ImageViewer<TData = unknown>({
   counterFontSize,
   renderFooter,
   renderOverlay,
+  renderImageOverlay,
   classNames,
   icons,
   ariaLabel,
@@ -605,13 +606,24 @@ export function ImageViewer<TData = unknown>({
               srcSet={item.srcSet}
               sizes={item.sizes}
               alt={item.alt ?? ""}
-              decoding="async"
+              // `sync`, not `async`, so a navigation src-swap presents the new
+              // image atomically with the same-frame DOM changes around it. On a
+              // committed swipe the adjacent panel (which showed the sliding
+              // image) unmounts and this element takes over at center in one
+              // pre-paint frame; `async` lets the browser paint that frame
+              // WITHOUT the freshly-swapped image and fill it in a frame later —
+              // a blank hand-off frame that reads as a blink at the end of the
+              // swipe. The incoming image is always warmed first (neighbor
+              // prefetch + the pre-navigate decode in useSlideNavigation), so the
+              // sync decode is a cache hit and adds no jank.
+              decoding="sync"
               className={cx("rvl-img", cn("image"))}
               style={imgStyle}
               draggable={false}
               onLoad={onImageLoad}
               onError={onImageError}
             />
+            {renderImageOverlay?.(ctx)}
           </div>
 
           {gateEntry && showSpinner && !fullLoaded && (

@@ -232,6 +232,18 @@ export interface ImageViewerProps<TData = unknown> {
   renderFooter?: (ctx: ViewerContext<TData>) => ReactNode;
   /** Drawers/graphs layered over the image. */
   renderOverlay?: (ctx: ViewerContext<TData>) => ReactNode;
+  /**
+   * Content rendered INSIDE the image wrapper, pinned to the active image's own
+   * box rather than the whole stage — so an absolutely-positioned child (a
+   * "removed"/"NSFW" badge, a watermark, a corner caption) tracks the corners of
+   * the letterboxed image as it resizes, instead of floating in the surrounding
+   * dead space the way {@link renderOverlay} would. The wrapper is
+   * `position: relative; overflow: hidden`; position children against it.
+   * Non-interactive by default (the wrapper owns the image tap); set
+   * `pointer-events: auto` on a child that needs clicks. Gate visibility on
+   * `ctx.isZoomed` yourself if the badge should hide while zoomed.
+   */
+  renderImageOverlay?: (ctx: ViewerContext<TData>) => ReactNode;
 
   // Theming / a11y
   classNames?: Partial<Record<ViewerSlot, string>>;
