@@ -156,6 +156,12 @@ export function useSlideNavigation(
   }, []);
 
   const refreshSlideDistance = useCallback(() => {
+    // A commit in flight has already locked the track's travel distance
+    // imperatively (see commitSlide). A late neighbor `onLoad` re-measure here
+    // would move the panel (via slideDistance state) but NOT the track target,
+    // landing the incoming image off-center and snapping it to true center on
+    // navigate. Freeze the distance until the commit clears the lock.
+    if (commitLockRef.current) return;
     updateSlideDistance(measureSlideDistance(slideTrackRef.current));
   }, [updateSlideDistance]);
 

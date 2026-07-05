@@ -98,6 +98,25 @@ describe("useSlideNavigation", () => {
     raf.mockRestore();
   });
 
+  it("freezes the slide distance during a commit so a late neighbor onLoad can't snap the landing", () => {
+    const { result } = setup();
+    // Commit locks the track's travel distance imperatively.
+    act(() => result.current.commitSlide("next"));
+    const committed = result.current.slideDistance;
+    expect(committed).toBeGreaterThan(0);
+
+    // A neighbor image finishes decoding mid-commit and reports a real (wider)
+    // size — the onLoad handler calls refreshSlideDistance. It must NOT move the
+    // panel now, or the incoming image lands off-center and snaps on navigate.
+    const img = document.createElement("div");
+    img.className = "rvl-img";
+    Object.defineProperty(img, "offsetWidth", { value: 400, configurable: true });
+    result.current.slideTrackRef.current!.appendChild(img);
+
+    act(() => result.current.refreshSlideDistance());
+    expect(result.current.slideDistance).toBe(committed);
+  });
+
   it("resolveSlide snaps back for a small, slow drag", () => {
     const { result } = setup();
     act(() => result.current.applySlideOffset(10));
