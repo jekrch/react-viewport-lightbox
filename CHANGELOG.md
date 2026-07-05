@@ -3,6 +3,25 @@
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 
+## v0.6.0
+
+- **`srcSet` / `sizes` on `ViewerItem`** — forwarded to `<img srcset>`/`<img sizes>`
+  (and mirrored into neighbor preloads) so phones fetch a right-sized image; `src`
+  stays the fallback.
+- **Momentum-matched swipe** — a released swipe now finishes at the finger's pace
+  (clamped) instead of a fixed-speed glide; button/keyboard nav keeps the fixed
+  duration.
+- **Rapid flick paging** — a flick landing mid-slide is queued and played when the
+  next slide paints instead of being dropped, so fast flick-flick-flick paging no
+  longer stalls.
+- **Neighbor crossfade** — the incoming image now fades in as you drag instead of
+  hard-sliding.
+- **Warm decode** — neighbor preloads now decode as well as fetch, so a swipe's
+  first frame no longer pays an image decode.
+- **Lighter mobile compositing** — backdrop and button blurs are dropped on
+  touch-primary devices, where they were invisible behind the overlay yet costly
+  to composite; desktop keeps both.
+
 ## v0.5.0
 
 - **`getOriginRect` → `getOrigin`** (breaking) — the shared-element zoom callback
