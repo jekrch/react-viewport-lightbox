@@ -1,6 +1,6 @@
 {
   "name": "@jekrch/react-viewport-lightbox",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "A headless-capable, touch-friendly React image viewer and lightbox with zoom, pan, and swipe.",
   "type": "module",
   "sideEffects": [

@@ -3,6 +3,16 @@
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 
+## v0.7.0
+
+- **`renderImageOverlay`** — new render slot whose content is pinned inside the
+  active image's own box, so a badge, watermark, or corner caption tracks the
+  letterboxed image's corners instead of floating in the surrounding dead space
+  like `renderOverlay`; non-interactive by default.
+- **Swipe-end blink fix** — the image now decodes synchronously on a navigation
+  src-swap, so a committed swipe no longer flashes a blank hand-off frame before
+  the new image paints.
+
 ## v0.6.0
 
 - **`srcSet` / `sizes` on `ViewerItem`** — forwarded to `<img srcset>`/`<img sizes>`
