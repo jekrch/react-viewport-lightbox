@@ -27,11 +27,30 @@ afterEach(() => {
 });
 
 describe("useSlideNavigation", () => {
-  it("applySlideOffset writes the offset to state and the track transform", () => {
+  it("applySlideOffset writes the offset to the ref and the track transform", () => {
     const { result } = setup();
     act(() => result.current.applySlideOffset(50));
-    expect(result.current.swipeOffset).toBe(50);
+    expect(result.current.swipeOffsetRef.current).toBe(50);
     expect(result.current.slideTrackRef.current!.style.transform).toBe("translateX(50px)");
+  });
+
+  it("fades the incoming neighbor imperatively, keeping the other pinned at 0", () => {
+    const { result } = setup();
+    act(() => {
+      result.current.prevPanelRef.current = document.createElement("div");
+      result.current.nextPanelRef.current = document.createElement("div");
+    });
+    // Drag toward next (negative offset): next fades in, prev stays hidden.
+    act(() => result.current.applySlideOffset(-80));
+    const prev = result.current.prevPanelRef.current!;
+    const next = result.current.nextPanelRef.current!;
+    expect(parseFloat(next.style.opacity)).toBeGreaterThan(0);
+    expect(next.style.transition).toBe("none"); // live drag tracks the finger
+    expect(prev.style.opacity).toBe("0");
+    // An animated apply (commit/snap) glides the opacity instead of snapping.
+    act(() => result.current.applySlideOffset(0, true));
+    expect(next.style.opacity).toBe("0");
+    expect(next.style.transition).toContain("opacity");
   });
 
   it("snapBack animates the track back to zero", () => {
@@ -39,7 +58,7 @@ describe("useSlideNavigation", () => {
     act(() => result.current.applySlideOffset(80));
     act(() => result.current.snapBack());
     expect(result.current.slideAnimating).toBe(true);
-    expect(result.current.swipeOffset).toBe(0);
+    expect(result.current.swipeOffsetRef.current).toBe(0);
 
     // The fallback timer ends the animation and clears the active state.
     act(() => vi.advanceTimersByTime(350));
@@ -55,12 +74,28 @@ describe("useSlideNavigation", () => {
     expect(result.current.slideActive).toBe(true);
   });
 
-  it("ignores a second commit while one is already in flight", () => {
+  it("queues (never double-plays) a second commit while one is in flight", () => {
     const onSlideStart = vi.fn();
     const { result } = setup(1, onSlideStart);
     act(() => result.current.commitSlide("next"));
+    // Queued for after the index paints (which never happens here — the index
+    // is fixed in this harness), so it must not start a second slide now.
     act(() => result.current.commitSlide("prev"));
     expect(onSlideStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("matches the commit duration to the release velocity, clamped to bounds", () => {
+    // Run the commit's rAF synchronously so the animation start is observable.
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+    const { result } = setup();
+    act(() => result.current.applySlideOffset(-200));
+    // 200px in 20ms → 10 px/ms, far past the fast bound → clamps to the 160ms floor.
+    act(() => result.current.resolveSlide(Date.now() - 20));
+    expect(result.current.slideTrackRef.current!.style.transition).toContain("160ms");
+    raf.mockRestore();
   });
 
   it("resolveSlide snaps back for a small, slow drag", () => {
@@ -69,6 +104,6 @@ describe("useSlideNavigation", () => {
     act(() => result.current.resolveSlide(Date.now() - 1000));
     // Below the distance + velocity thresholds → snap back, not a commit.
     expect(result.current.slideAnimating).toBe(true);
-    expect(result.current.swipeOffset).toBe(0);
+    expect(result.current.swipeOffsetRef.current).toBe(0);
   });
 });

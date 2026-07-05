@@ -12,6 +12,16 @@ export interface ViewerItem<TData = unknown> {
   id: string;
   /** FINAL url — the consumer resolves any base path before passing it in. */
   src: string;
+  /**
+   * Optional responsive candidates, forwarded to the underlying `<img srcset>`
+   * (and mirrored into the neighbor preloads, so warming fetches the same
+   * resource the panel will render). Lets phones fetch and decode an
+   * appropriately sized image instead of the full-resolution `src` — usually
+   * the single biggest mobile cost. `src` remains the fallback.
+   */
+  srcSet?: string;
+  /** `sizes` for the `srcSet` candidates, forwarded to `<img sizes>`. */
+  sizes?: string;
   alt?: string;
   /** Optional thumbnail url; falls back to `src`. */
   thumbnail?: string;

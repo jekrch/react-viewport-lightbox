@@ -267,6 +267,11 @@
   justify-content: center;
   user-select: none;
   pointer-events: none;
+  /* Invisible until the swipe reveals it: the crossfade is written straight to
+     style.opacity per gesture frame (useSlideNavigation), NOT rendered through
+     React, so the resting value must live here rather than in the style prop
+     (which would clobber the imperative writes on any re-render). */
+  opacity: 0;
 }
 
 .rvl-img-wrapper {
@@ -457,6 +462,25 @@
 }
 .rvl-overlay > * {
   pointer-events: auto;
+}
+
+/* Touch-primary devices ------------------------------------------------------ */
+
+/* Skip the blurs on phones/tablets. A full-viewport Gaussian blur is one of the
+   most expensive things a mobile GPU composites, re-sampled under the open
+   fade, the thumbnail-zoom FLIP, and every swipe — and behind the 90%-opaque
+   overlay it's essentially invisible, so it spends frame budget on nothing.
+   The button blurs are smaller but stack several extra filter layers into the
+   top bar. Desktop GPUs keep both. (Must come after the .rvl-backdrop/.rvl-btn
+   base rules: same specificity, so source order decides.) */
+@media (hover: none) and (pointer: coarse) {
+  .rvl-backdrop {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .rvl-btn {
+    backdrop-filter: none;
+  }
 }
 
 /* Reduced motion ------------------------------------------------------------ */

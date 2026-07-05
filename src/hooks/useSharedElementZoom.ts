@@ -5,6 +5,21 @@ import type { ViewerRect } from "../types";
 export const ANIM_MS = 250;
 // Vertical breathing room reserved around the image, per side, in px.
 export const IMG_PADDING = 44;
+/**
+ * Full-viewport-height CSS term for sizing the image. `100dvh` where supported:
+ * on mobile browsers with a collapsing URL bar, `100vh` is the LARGEST viewport
+ * height, so while the bar is showing the image is sized against space that
+ * isn't there and the layout is subtly too tall. `dvh` tracks the visible
+ * viewport. Falls back to `100vh` (older browsers, jsdom, SSR — where a
+ * hydration style mismatch is harmless because the viewer mounts on
+ * interaction).
+ */
+export const VIEWPORT_H =
+  typeof CSS !== "undefined" &&
+  typeof CSS.supports === "function" &&
+  CSS.supports("height", "100dvh")
+    ? "100dvh"
+    : "100vh";
 // Decelerating ease for the shared-element zoom so it settles softly.
 const ZOOM_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 
@@ -187,7 +202,7 @@ export function useSharedElementZoom({
     // visibly jump / re-expand. Held for the whole flight, then matched to React's
     // now-settled value on finish.
     const bottomH = bottomBarRef.current?.offsetHeight ?? 0;
-    const lockedMaxHeight = `calc(100vh - ${bottomH + IMG_PADDING * 2}px)`;
+    const lockedMaxHeight = `calc(${VIEWPORT_H} - ${bottomH + IMG_PADDING * 2}px)`;
     img.style.maxHeight = lockedMaxHeight;
 
     const imgRect = img.getBoundingClientRect();

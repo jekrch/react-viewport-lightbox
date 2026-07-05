@@ -68,7 +68,9 @@ export function useGestureHandler(
     clampTranslate,
     setTransform,
     applyTransform,
+    syncDisplayScale,
     resetTransform,
+    measureBaseDims,
   } = zoomPan;
   const {
     applySlideOffset,
@@ -300,9 +302,11 @@ export function useGestureHandler(
 
         const next = { scale: nextScale, ...clamped };
         transformRef.current = next;
-        // applyTransform writes the wrapper style AND syncs displayScale, so the
-        // UI (zoom %/controls) tracks each pinch frame. We call it directly rather
-        // than setTransform to skip setTransform's redundant second setDisplayScale.
+        // applyTransform writes the wrapper style directly; it only re-renders
+        // React when the zoomed boundary flips, so a pinch frame costs no
+        // render. The exact scale reaches state via syncDisplayScale on
+        // touchend (the zoom %/controls are hidden on touch-primary devices,
+        // so nothing visible lags mid-gesture).
         applyTransform(next);
       } else if (e.touches.length === 1 && p.lastTouchPos && transformRef.current.scale > 1) {
         // Zoomed pan
@@ -332,6 +336,11 @@ export function useGestureHandler(
       const wasPinch = p.pinchStartDist !== null;
       p.pinchStartDist = null;
       p.pinchMidpoint = null;
+
+      // Per-frame pinch/pan writes bypass React (see handleTouchMove); now
+      // that the gesture is settling, sync the exact scale to state so the
+      // zoom readout/controls are correct. No-op re-render-wise if unchanged.
+      syncDisplayScale();
 
       if (e.touches.length === 0 && transformRef.current.scale <= 1) {
         // Resolve slide if active
@@ -377,7 +386,22 @@ export function useGestureHandler(
           if (transformRef.current.scale > 1) {
             resetTransform();
           } else {
-            setTransform({ scale: DOUBLE_TAP_ZOOM_SCALE, x: 0, y: 0 }, true);
+            // Anchor the zoom on the tap point (same rule as pinch/wheel) so
+            // the detail the user tapped stays put instead of sliding off
+            // toward the center; `zoomToCursor: false` keeps center-zoom.
+            // Base dims can be unmeasured if the double-tap beats the image's
+            // load handler; measure lazily like the wheel path does.
+            if (baseDimsRef.current.width === 0) measureBaseDims();
+            const clamped = computeZoomTransform({
+              prevScale: 1,
+              nextScale: DOUBLE_TAP_ZOOM_SCALE,
+              prev: { x: 0, y: 0 },
+              focal: { x: touch.clientX, y: touch.clientY },
+              viewport: { width: window.innerWidth, height: window.innerHeight },
+              baseDims: baseDimsRef.current,
+              zoomToCursor,
+            });
+            setTransform({ scale: DOUBLE_TAP_ZOOM_SCALE, ...clamped }, true);
           }
         } else {
           lastTapRef.current = { time: now, x: touch.clientX, y: touch.clientY };
@@ -392,12 +416,16 @@ export function useGestureHandler(
     },
     [
       transformRef,
+      baseDimsRef,
+      measureBaseDims,
       resetTransform,
       setTransform,
+      syncDisplayScale,
       resolveSlide,
       setSlideActive,
       swipeOffsetRef,
       zoomEnabled,
+      zoomToCursor,
     ],
   );
 

@@ -111,11 +111,18 @@ animation and calls `onClose` after the exit completes.
 interface ViewerItem<TData = unknown> {
   id: string;
   src: string; // final url
+  srcSet?: string; // responsive candidates, forwarded to <img srcset>
+  sizes?: string; // sizes for the srcSet candidates
   alt?: string;
   thumbnail?: string; // falls back to src
   data?: TData; // optional per-slide payload (see below)
 }
 ```
+
+Supplying `srcSet`/`sizes` is the biggest mobile win you can hand the viewer: a
+phone fetches and decodes an appropriately sized image instead of the
+full-resolution `src`. The neighbor preloads mirror them, so warming fetches the
+same resource the slide will render.
 
 ### Per-slide details
 

@@ -44,6 +44,14 @@ export interface ImageZoomPanState {
    */
   setTransform: (t: ImageTransform, animate?: boolean | string) => void;
   applyTransform: (t: ImageTransform, animate?: boolean | string) => void;
+  /**
+   * Sync `displayScale` to the transform's exact current scale. Call when a
+   * per-frame gesture (pinch/pan via `applyTransform`) settles: mid-gesture,
+   * React state only updates when the zoomed boundary flips, so the readout
+   * can lag the real scale until this runs. Bails out (no re-render) when
+   * nothing changed.
+   */
+  syncDisplayScale: () => void;
   clampTranslate: (x: number, y: number, scale: number) => { x: number; y: number };
   measureBaseDims: () => void;
   handleDoubleClick: (e: React.MouseEvent) => void;
@@ -76,6 +84,7 @@ export function useImageZoomPan(
   const [displayScale, setDisplayScale] = useState(1);
   const transformRef = useRef<ImageTransform>({ scale: 1, x: 0, y: 0 });
   const baseDimsRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+  const willChangeIdleTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Core helpers
 
@@ -98,10 +107,26 @@ export function useImageZoomPan(
         // Promote only while zoomed/panning; the wrapper is the element the
         // zoom transform lives on, so this is where the hint belongs.
         wrapper.style.willChange = "transform";
+        // …and release the hint once transform writes go idle: Chromium keeps
+        // a will-changed layer rastered at the scale it was promoted at, so a
+        // settled zoom otherwise stays a blurry upscale of the 1x raster.
+        // Dropping the hint forces a crisp re-raster at the current scale;
+        // the next gesture frame re-promotes. 300ms sits past the longest
+        // transition this path plays (0.2s), so the release never lands
+        // mid-glide and re-rasters a moving layer.
+        clearTimeout(willChangeIdleTimerRef.current);
+        willChangeIdleTimerRef.current = setTimeout(() => {
+          const w = imgWrapperRef.current;
+          if (w && transformRef.current.scale > 1) w.style.willChange = "";
+        }, 300);
       }
 
-      // Keep React state in sync so isZoomed reflects reality
-      setDisplayScale(t.scale);
+      // This is the per-frame path for touch pinch/pan, so only re-render
+      // React when the zoomed boundary flips (isZoomed / nav-row visibility
+      // must track immediately); returning `prev` bails out of the render
+      // otherwise. The exact scale is synced by setTransform for discrete ops
+      // and by syncDisplayScale when a gesture settles.
+      setDisplayScale((prev) => (prev > 1 === t.scale > 1 ? prev : t.scale));
     },
     [imgWrapperRef],
   );
@@ -114,6 +139,10 @@ export function useImageZoomPan(
     },
     [applyTransform],
   );
+
+  const syncDisplayScale = useCallback(() => {
+    setDisplayScale(transformRef.current.scale);
+  }, []);
 
   const resetTransform = useCallback(() => {
     setTransform({ scale: 1, x: 0, y: 0 }, true);
@@ -142,6 +171,11 @@ export function useImageZoomPan(
       }),
     [],
   );
+
+  // Don't let a pending will-change release outlive the viewer.
+  useEffect(() => {
+    return () => clearTimeout(willChangeIdleTimerRef.current);
+  }, []);
 
   // Reset on navigation
 
@@ -212,10 +246,22 @@ export function useImageZoomPan(
       if (transformRef.current.scale > 1) {
         resetTransform();
       } else {
-        setTransform({ scale: DOUBLE_CLICK_ZOOM_SCALE, x: 0, y: 0 }, true);
+        // Anchor the zoom on the click point (same rule as wheel/pinch) so the
+        // detail the user aimed at stays put instead of sliding off toward the
+        // center; `zoomToCursor: false` keeps the old center-zoom.
+        const clamped = computeZoomTransform({
+          prevScale: 1,
+          nextScale: DOUBLE_CLICK_ZOOM_SCALE,
+          prev: { x: 0, y: 0 },
+          focal: { x: e.clientX, y: e.clientY },
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          baseDims: baseDimsRef.current,
+          zoomToCursor,
+        });
+        setTransform({ scale: DOUBLE_CLICK_ZOOM_SCALE, ...clamped }, true);
       }
     },
-    [resetTransform, setTransform, enabled, ensureBaseDims],
+    [resetTransform, setTransform, enabled, ensureBaseDims, zoomToCursor],
   );
 
   return {
@@ -227,6 +273,7 @@ export function useImageZoomPan(
     resetTransform,
     setTransform,
     applyTransform,
+    syncDisplayScale,
     clampTranslate,
     measureBaseDims,
     handleDoubleClick,

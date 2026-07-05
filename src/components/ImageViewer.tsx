@@ -12,6 +12,7 @@ import {
   prefersReducedMotion,
   ANIM_MS,
   IMG_PADDING,
+  VIEWPORT_H,
 } from "../hooks/useSharedElementZoom";
 import { defaultIcons } from "./icons";
 import { NavButton } from "./NavButton";
@@ -127,9 +128,10 @@ export function ImageViewer<TData = unknown>({
   const slide = useSlideNavigation(items, index, onIndexChange, onNavigate, loop);
   const {
     slideTrackRef,
+    prevPanelRef,
+    nextPanelRef,
     slideActive,
     slideAnimating,
-    swipeOffset,
     slideDistance,
     commitSlide,
     refreshSlideDistance,
@@ -183,38 +185,52 @@ export function ImageViewer<TData = unknown>({
   }, []);
 
   // Warm the neighbors: whenever the active index changes, kick off a background
-  // fetch of the previous and next images so a swipe/nav to them draws from the
-  // browser cache instead of waiting on the network. The adjacent <img> panels
-  // only mount mid-swipe, so without this the first frame of a button/keyboard
-  // move (or a fresh swipe) hits the wire cold. Decoded images are kept in the
-  // HTTP cache; we hold the Image objects only until they settle so an in-flight
-  // fetch isn't aborted by GC.
+  // fetch AND decode of the previous and next images so a swipe/nav to them
+  // draws from the browser's caches instead of waiting on the network. The
+  // adjacent <img> panels only mount mid-swipe, so without this the first frame
+  // of a button/keyboard move (or a fresh swipe) hits the wire cold — and
+  // without the decode() the first swipe frame pays the (main-thread-visible)
+  // decode of a full-size photo right as the gesture starts. Warming runs at
+  // low fetch priority so it never competes with the active image on a
+  // constrained connection. We hold the Image objects until they settle so an
+  // in-flight fetch isn't aborted by GC.
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const prevSrc = hasPrevLinear
-      ? items[index - 1]?.src
+    const prevWarm = hasPrevLinear
+      ? items[index - 1]
       : hasPrev
-        ? items[items.length - 1]?.src
+        ? items[items.length - 1]
         : undefined;
-    const nextSrc = hasNextLinear ? items[index + 1]?.src : hasNext ? items[0]?.src : undefined;
+    const nextWarm = hasNextLinear ? items[index + 1] : hasNext ? items[0] : undefined;
 
     const loaders: HTMLImageElement[] = [];
-    for (const src of [prevSrc, nextSrc]) {
-      if (!src) continue;
+    for (const warm of [prevWarm, nextWarm]) {
+      if (!warm?.src) continue;
       const img = new Image();
+      if ("fetchPriority" in img) img.fetchPriority = "low";
+      // Mirror the panel <img>'s srcset/sizes so the warmed resource is the
+      // one the browser will actually pick when the panel mounts.
+      if (warm.srcSet) {
+        img.srcset = warm.srcSet;
+        if (warm.sizes) img.sizes = warm.sizes;
+      }
+      img.src = warm.src;
       const done = () => {
         const i = loaders.indexOf(img);
         if (i !== -1) loaders.splice(i, 1);
       };
-      img.onload = done;
-      img.onerror = done;
-      img.src = src;
+      if (typeof img.decode === "function") {
+        img.decode().then(done, done);
+      } else {
+        img.onload = done;
+        img.onerror = done;
+      }
       loaders.push(img);
     }
 
     return () => {
-      // Drop refs on navigation; any completed fetch stays in the cache.
+      // Drop refs on navigation; any completed fetch/decode stays cached.
       for (const img of loaders) {
         img.onload = null;
         img.onerror = null;
@@ -395,7 +411,7 @@ export function ImageViewer<TData = unknown>({
   if (!item) return null;
 
   const reservedH = bottomBarH + IMG_PADDING * 2;
-  const imgMaxHeight = `calc(100vh - ${reservedH}px)`;
+  const imgMaxHeight = `calc(${VIEWPORT_H} - ${reservedH}px)`;
   const imgStyle: React.CSSProperties = { maxHeight: imgMaxHeight };
 
   // Numbers become px; strings pass through (e.g. "1.5rem"). Only emit vars that
@@ -421,23 +437,17 @@ export function ImageViewer<TData = unknown>({
   const nextIndex = hasNextLinear ? index + 1 : hasNext ? 0 : -1;
   const prevItem = prevIndex >= 0 ? items[prevIndex] : null;
   const nextItem = nextIndex >= 0 ? items[nextIndex] : null;
-  const showAdjacent = slideActive || slideAnimating || swipeOffset !== 0;
+  const showAdjacent = slideActive || slideAnimating;
   // Neighbors sit `slideDistance` px to the side (see measureSlideDistance),
   // which starts their image right at the screen edge, so they slide in from the
   // edge as the track shifts. Falls back to the full viewport width before the
   // first measurement lands (classic full-width slot), matching the old
-  // translateX(±100%) behavior.
+  // translateX(±100%) behavior. Their swipe-following crossfade is NOT rendered
+  // here: useSlideNavigation writes it straight to the panels' style (via
+  // prevPanelRef/nextPanelRef) alongside the track transform, so a touchmove
+  // never re-renders this tree. Keep opacity/transition out of the style prop
+  // below or React would clobber those writes on unrelated re-renders.
   const adjacentOffset = slideDistance || viewportWidth;
-  // The incoming neighbor also fades in as it's dragged toward center: opacity
-  // ramps with the swipe distance and clamps to 1 shortly before the slide
-  // fully commits, so the reveal is a crossfade rather than a hard slide.
-  const adjacentOpacity = Math.min(1, Math.abs(swipeOffset) / (adjacentOffset * 0.8 || 1));
-  // On commit/snap the offset jumps straight to its target, so the opacity would
-  // snap 0→1 in one frame — a flash, worst on a fast flick that never dragged
-  // far enough to raise the opacity much. Glide it over the slide's duration
-  // while animating; during a live drag there's no transition, so it still
-  // tracks the finger exactly.
-  const adjacentTransition = slideAnimating ? "opacity 0.28s cubic-bezier(0.2, 0, 0, 1)" : "none";
 
   // Never show the zoom controls while the image is shifted out of view (e.g. a
   // consumer-driven details/overlay pane pushed in via setContentShift): the
@@ -554,22 +564,21 @@ export function ImageViewer<TData = unknown>({
         >
           {showAdjacent && prevItem && (
             <div
+              ref={prevPanelRef}
               className="rvl-adjacent"
               // Positioned `adjacentOffset` px to the left (see
               // measureSlideDistance): the panel is centered in the full-width
               // track, so this rests its image just past the left screen edge
-              // with breathing room. Shown only when swiping toward it (offset >
-              // 0 reveals prev); the opposite neighbor stays hidden so it can
-              // never flash in.
-              style={{
-                transform: `translateX(${-adjacentOffset}px)`,
-                opacity: swipeOffset > 0 ? adjacentOpacity : 0,
-                transition: adjacentTransition,
-              }}
+              // with breathing room. Opacity starts at 0 (CSS) and is driven
+              // imperatively by the swipe (see useSlideNavigation).
+              style={{ transform: `translateX(${-adjacentOffset}px)` }}
             >
               <img
                 src={prevItem.src}
+                srcSet={prevItem.srcSet}
+                sizes={prevItem.sizes}
                 alt=""
+                decoding="async"
                 className={cx("rvl-img", cn("image"))}
                 style={imgStyle}
                 draggable={false}
@@ -593,7 +602,10 @@ export function ImageViewer<TData = unknown>({
             <img
               ref={imgRef}
               src={item.src}
+              srcSet={item.srcSet}
+              sizes={item.sizes}
               alt={item.alt ?? ""}
+              decoding="async"
               className={cx("rvl-img", cn("image"))}
               style={imgStyle}
               draggable={false}
@@ -610,21 +622,20 @@ export function ImageViewer<TData = unknown>({
 
           {showAdjacent && nextItem && (
             <div
+              ref={nextPanelRef}
               className="rvl-adjacent"
-              // See prev panel above: positioned `adjacentOffset` px to the right
-              // (image just past the right screen edge) and shown only when
-              // swiping toward next (offset < 0) so prev never flashes on the far
-              // edge.
-              style={{
-                transform: `translateX(${adjacentOffset}px)`,
-                opacity: swipeOffset < 0 ? adjacentOpacity : 0,
-                transition: adjacentTransition,
-              }}
+              // See prev panel above: positioned `adjacentOffset` px to the
+              // right (image just past the right screen edge); opacity is
+              // swipe-driven imperatively.
+              style={{ transform: `translateX(${adjacentOffset}px)` }}
             >
               <img
                 src={nextItem.src}
+                srcSet={nextItem.srcSet}
+                sizes={nextItem.sizes}
                 alt=""
                 onLoad={refreshSlideDistance}
+                decoding="async"
                 className={cx("rvl-img", cn("image"))}
                 style={imgStyle}
                 draggable={false}
