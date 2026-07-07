@@ -39,6 +39,15 @@
      via the `navInset` prop; floored by the device safe-area inset. Defaults to
      1.3rem to match the comic-snaps viewer. */
   --rvl-nav-inset: 1.3rem;
+  /* How far the backdrop bleeds past the viewport's top/bottom edges. iOS
+     Safari's toolbars are translucent: they blur-sample the pixels rendered
+     beneath them, and a fixed `inset: 0` layer stops exactly at the toolbar
+     edge — so without the bleed, Safari tints its bottom control space with
+     whatever host-page content happens to sit under the bar (a light panel
+     behind a dark viewer, in the worst case). 6rem clears the tallest expanded
+     toolbar (~5.25rem incl. home indicator on notched iPhones); the overdraw is
+     a flat composited layer, so it costs nothing where bars don't exist. */
+  --rvl-chrome-bleed: 6rem;
 }
 
 /* Root overlay -------------------------------------------------------------- */
@@ -66,7 +75,13 @@
 }
 .rvl-backdrop {
   position: absolute;
-  inset: 0;
+  /* Bleed past the top/bottom viewport edges so iOS Safari's translucent
+     toolbars and the home-indicator band sample the dark backdrop instead of
+     the host page behind the viewer (see --rvl-chrome-bleed). Horizontal edges
+     stay flush: nothing samples there, and side overflow could surface in
+     landscape rotation. The bleed lives on this absolutely-positioned child of
+     the fixed root, so it never adds scrollable overflow to the document. */
+  inset: calc(-1 * var(--rvl-chrome-bleed)) 0;
   z-index: 0;
   background-color: var(--rvl-overlay-bg);
   /* Blur is applied statically, not transitioned. iOS Safari recomputes a
