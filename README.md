@@ -359,6 +359,7 @@ Override any of these CSS custom properties (cascade into the viewer):
 | `--rvl-btn-bg` / `--rvl-btn-bg-hover` | translucent white |
 | `--rvl-radius`                        | `4px`             |
 | `--rvl-anim-duration`                 | `250ms`           |
+| `--rvl-chrome-bleed`                  | `6rem`            |
 
 ```css
 .my-gallery {
@@ -368,10 +369,15 @@ Override any of these CSS custom properties (cascade into the viewer):
 ```
 
 `--rvl-theme-color` tints the iOS Safari chrome (the status-bar strip above and the
-home-indicator strip below the viewport) while the viewer is open, via a
-`<meta name="theme-color">` override that's restored on close. It must be opaque
-(`theme-color` ignores alpha), which is why it's separate from `--rvl-overlay-bg`;
-set it to match a themed overlay.
+home-indicator strip below the viewport) while the viewer is open. It must be opaque
+(iOS ignores alpha for chrome color), which is why it's separate from
+`--rvl-overlay-bg`; set it to match a themed overlay. Safari 26 dropped
+`<meta name="theme-color">`, so the viewer renders fixed opaque edge strips in this
+color for Safari to sample, and still writes the legacy meta tag for iOS 15–18.
+
+`--rvl-chrome-bleed` sets how far the backdrop overdraws past the viewport edges so a
+scrolled-open overlay never reveals the page behind those iOS chrome bands; the
+default (`6rem`) suits full-height overlays and rarely needs changing.
 
 For finer control, pass `classNames` to target individual slots (`root`, `backdrop`,
 `topBar`, `bottomBar`, `image`, `button`, `counter`, `navButton`, `overlay`).

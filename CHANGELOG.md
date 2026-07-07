@@ -3,6 +3,16 @@
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 
+## v0.8.0
+
+- **iOS Safari 26 chrome tint** — the status-bar strip and home-indicator band
+  stay overlay-dark again on Safari 26, which dropped `<meta name="theme-color">`;
+  the viewer now renders fixed opaque edge strips that Safari samples for its
+  chrome color, and still writes the legacy `theme-color` meta for iOS 15–18.
+- **`--rvl-chrome-bleed`** — new CSS custom property setting how far the backdrop
+  overdraws past the viewport edges, so a scrolled-open overlay never reveals the
+  page behind the iOS chrome bands (default `6rem`).
+
 ## v0.7.0
 
 - **`renderImageOverlay`** — new render slot whose content is pinned inside the
