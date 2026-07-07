@@ -7,8 +7,10 @@ import { useEffect } from "react";
  * Safari color those regions from the page behind the viewer.
  *
  * Safari derives the chrome color from several sources, so this hook overrides
- * two of them for the duration (the third — live pixels under the translucent
- * bars — is handled in CSS by the backdrop's `--rvl-chrome-bleed` overdraw):
+ * two of them for the duration (live pixels under the translucent bars are
+ * handled in CSS by the backdrop's `--rvl-chrome-bleed` overdraw and the
+ * `.rvl-root::before/::after` tile caps), then fires a scroll nudge so Safari
+ * actually re-reads them (see `nudgeSafariResample`):
  *
  * 1. `<meta name="theme-color">` — the declared tint, honored in some bar
  *    states (e.g. the minimized/compact toolbar).
@@ -46,6 +48,41 @@ let rootBgTimer: ReturnType<typeof setTimeout> | undefined;
 let rootBgApplied = false;
 let previousRootBg = "";
 
+/**
+ * iOS Safari samples the page for its chrome tint on scroll events and holds
+ * the result until the next one. Opening the viewer fires exactly one: the
+ * scroll lock pins the body, the scroll offset clamps to 0, and Safari
+ * resamples — on a frame where the backdrop is still transparent, so it
+ * captures the host page behind the viewer. The locked page never scrolls
+ * again, so that stale tint is frozen for the whole session no matter what
+ * theme-color / canvas color / pixels say afterwards.
+ *
+ * This fires one more real scroll event once the overlay is opaque: grant the
+ * root scroller 2px of temporary scroll range, nudge to 1 and back. Every
+ * on-screen layer is `position: fixed` (the pinned body and the overlay), so
+ * nothing visibly moves — but Safari resamples against the dark viewer.
+ * iOS-only: elsewhere it's dead weight, and a synthetic window scroll could
+ * confuse host scroll listeners.
+ */
+function nudgeSafariResample(): void {
+  const isIOS =
+    /iP(hone|ad|od)/.test(navigator.platform ?? "") ||
+    (navigator.userAgent.includes("Mac") && navigator.maxTouchPoints > 1);
+  if (!isIOS) return;
+
+  const root = document.documentElement;
+  const previousMinHeight = root.style.minHeight;
+  root.style.minHeight = `${root.clientHeight + 2}px`;
+  window.scrollTo(0, 1);
+  // Not canceled on cleanup: the callback must run to restore minHeight, and
+  // the scroll-back is guarded so a close in this frame gap (after which the
+  // scroll lock has restored the page's real offset) isn't yanked back to 0.
+  requestAnimationFrame(() => {
+    if (activeCount > 0) window.scrollTo(0, 0);
+    root.style.minHeight = previousMinHeight;
+  });
+}
+
 export function useThemeColor(isActive: boolean): void {
   useEffect(() => {
     if (!isActive) return;
@@ -81,6 +118,7 @@ export function useThemeColor(isActive: boolean): void {
         previousRootBg = document.documentElement.style.backgroundColor;
         document.documentElement.style.backgroundColor = color;
         rootBgApplied = true;
+        nudgeSafariResample();
       }, fadeMs + 50);
     }
     activeCount += 1;
@@ -92,6 +130,9 @@ export function useThemeColor(isActive: boolean): void {
           clearTimeout(rootBgTimer);
           rootBgTimer = undefined;
         }
+        // A pending nudge rAF is deliberately NOT canceled here: its callback
+        // restores the temporary minHeight, and its scroll-back is already
+        // guarded by activeCount, so letting it run is the safe path.
         if (rootBgApplied) {
           document.documentElement.style.backgroundColor = previousRootBg;
           rootBgApplied = false;
