@@ -52,6 +52,13 @@ describe("<ImageViewer>", () => {
     expect(img).toHaveAttribute("src", "/b.jpg");
   });
 
+  it("renders the Safari 26 chrome-tint edge strips", () => {
+    setup(0);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.querySelector(".rvl-chrome-tint-top")).toBeInTheDocument();
+    expect(dialog.querySelector(".rvl-chrome-tint-bottom")).toBeInTheDocument();
+  });
+
   it("shows the counter by default and hides it when showCounter is false", () => {
     const { onClose } = setup(0);
     expect(screen.getByText("1 / 3")).toBeInTheDocument();

@@ -169,7 +169,7 @@ export function App() {
       <section className="pg-section">
         <div className="pg-section-head">
           <h2>Try it</h2>
-          <p>Open an image, then zoom, swipe, and toggle Details</p>
+          <p>Open an image, then zoom, swipe, and toggle Details.</p>
         </div>
 
         <div className="pg-controls">

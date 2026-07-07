@@ -105,44 +105,35 @@
   opacity: 1;
 }
 
-/* Opaque caps over the iOS chrome sample bands. The backdrop above is
-   deliberately promoted to its own GPU layer (translateZ), and Safari's
-   chrome-tint sampling can read the page's unpromoted tile content rather
-   than the final composite — which would sail right past the backdrop to the
-   host page. These caps are painted plain (no transform/filter/animation) at
-   z-index -1, i.e. *underneath* the composited backdrop, so they land in the
-   page's own tile layer where the sampler looks, while staying visually
-   hidden behind the backdrop. They cover the bleed outside the viewport plus
-   the safe-area strip inside it (the region under the status bar / home
-   indicator with viewport-fit=cover). Opaque — unlike the 90% overlay bg —
-   because a sampler may skip non-opaque backgrounds.
-   The 0s-delayed transition swaps them in only after the open fade (an
-   instant appearance at mount would flash dark bands over the host page) and
-   swaps them out at the tail of the close fade, matching the theme-color
-   tint's hold-to-unmount behavior so the bands don't flash mid-close. */
-.rvl-root::before,
-.rvl-root::after {
-  content: "";
-  position: absolute;
+/* Safari 26 chrome tint sources. iOS/macOS Safari 26 no longer honors
+   `<meta name="theme-color">`; it colors its chrome (status-bar strip, bottom
+   control space) from the computed background of a `position: fixed` element
+   sitting at the viewport edge — the detector requires top:0 / bottom:0,
+   full width, height ≥ 6px, and an opaque background-color, and it REJECTS
+   candidates with opacity < 1, visibility:hidden, negative z-index, or any
+   transform. Nothing else in the viewer qualifies (the root is deliberately
+   transparent, the backdrop is translateZ-promoted and 90% alpha), so Safari
+   would skip the whole overlay and tint from the host page behind it. These
+   strips exist solely to be the detected element: plain, opaque, static —
+   no fade (an opacity transition would disqualify them at the moment Safari
+   evaluates). At 6px on the extreme screen edges they sit under the status
+   bar / home-indicator chrome, so their instant appearance at mount is
+   invisible in practice. z-index 5: above the backdrop (0), below the image
+   stage (10) and bars (20). */
+.rvl-chrome-tint {
+  position: fixed;
   left: 0;
-  right: 0;
-  z-index: -1;
-  background: var(--rvl-theme-color);
-  opacity: 0;
-  transition: opacity 0s var(--rvl-anim-duration);
+  width: 100%;
+  height: 6px;
+  z-index: 5;
+  background-color: var(--rvl-theme-color);
   pointer-events: none;
 }
-.rvl-root::before {
-  top: calc(-1 * var(--rvl-chrome-bleed));
-  height: calc(var(--rvl-chrome-bleed) + env(safe-area-inset-top, 0px) + 2px);
+.rvl-chrome-tint-top {
+  top: 0;
 }
-.rvl-root::after {
-  bottom: calc(-1 * var(--rvl-chrome-bleed));
-  height: calc(var(--rvl-chrome-bleed) + env(safe-area-inset-bottom, 0px) + 2px);
-}
-.rvl-root.rvl-visible::before,
-.rvl-root.rvl-visible::after {
-  opacity: 1;
+.rvl-chrome-tint-bottom {
+  bottom: 0;
 }
 
 /* Bars ---------------------------------------------------------------------- */

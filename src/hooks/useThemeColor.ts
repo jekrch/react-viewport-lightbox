@@ -6,19 +6,21 @@ import { useEffect } from "react";
  * `isActive` is true (e.g. while the lightbox is open), instead of letting
  * Safari color those regions from the page behind the viewer.
  *
- * Safari derives the chrome color from several sources, so this hook overrides
- * two of them for the duration (live pixels under the translucent bars are
- * handled in CSS by the backdrop's `--rvl-chrome-bleed` overdraw and the
- * `.rvl-root::before/::after` tile caps), then fires a scroll nudge so Safari
- * actually re-reads them (see `nudgeSafariResample`):
+ * Safari's chrome-color sources differ by version, so the viewer covers all of
+ * them. Safari 26 (iOS 26+) dropped `<meta name="theme-color">` and instead
+ * detects a qualifying `position: fixed` element at the viewport edge — that
+ * primary path is served by the `.rvl-chrome-tint` strips rendered by
+ * ImageViewer (see styles.css). This hook covers the remaining sources, then
+ * fires a scroll nudge so Safari re-evaluates them mid-session (see
+ * `nudgeSafariResample`):
  *
- * 1. `<meta name="theme-color">` — the declared tint, honored in some bar
- *    states (e.g. the minimized/compact toolbar).
- * 2. The root element's background color — Safari falls back to the document
- *    canvas color for the status-bar strip and overscroll areas, and the
- *    canvas is painted by `<html>`'s background. The overlay is a fixed layer
- *    that is *not* part of the canvas, so without this override Safari can
- *    tint the top strip with whatever host content sits at the sampled spot.
+ * 1. `<meta name="theme-color">` — honored by iOS 15–18 Safari and standalone
+ *    PWAs; legacy support.
+ * 2. The `<body>` and root (`<html>`) background colors — Safari 26's fallback
+ *    when no fixed edge element qualifies, and what older Safari uses for the
+ *    overscroll rubber-band areas. The overlay is a fixed layer that is *not*
+ *    part of the document canvas, so without this override those paths read
+ *    the host page's colors.
  *
  * The root-background swap is deferred until the open fade has completed: at
  * mount the backdrop is still transparent, and on a host page whose visible
@@ -47,6 +49,7 @@ let previousContent = "";
 let rootBgTimer: ReturnType<typeof setTimeout> | undefined;
 let rootBgApplied = false;
 let previousRootBg = "";
+let previousBodyBg = "";
 
 /**
  * iOS Safari samples the page for its chrome tint on scroll events and holds
@@ -116,7 +119,9 @@ export function useThemeColor(isActive: boolean): void {
       rootBgTimer = setTimeout(() => {
         rootBgTimer = undefined;
         previousRootBg = document.documentElement.style.backgroundColor;
+        previousBodyBg = document.body.style.backgroundColor;
         document.documentElement.style.backgroundColor = color;
+        document.body.style.backgroundColor = color;
         rootBgApplied = true;
         nudgeSafariResample();
       }, fadeMs + 50);
@@ -135,6 +140,7 @@ export function useThemeColor(isActive: boolean): void {
         // guarded by activeCount, so letting it run is the safe path.
         if (rootBgApplied) {
           document.documentElement.style.backgroundColor = previousRootBg;
+          document.body.style.backgroundColor = previousBodyBg;
           rootBgApplied = false;
         }
         if (metaEl) {

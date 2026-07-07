@@ -477,6 +477,15 @@ export function ImageViewer<TData = unknown>({
         aria-hidden="true"
       />
 
+      {/* Safari 26 chrome tint sources: iOS 26 dropped theme-color and instead
+          colors its status-bar / toolbar chrome from a `position: fixed`
+          element at the viewport edge (top: 0 / bottom: 0, full width, ≥6px
+          tall, opaque background, no opacity/transform/negative-z — all of
+          which disqualify the transparent root and the translateZ'd backdrop).
+          These strips exist purely to be that detected element. */}
+      <div className="rvl-chrome-tint rvl-chrome-tint-top" aria-hidden="true" />
+      <div className="rvl-chrome-tint rvl-chrome-tint-bottom" aria-hidden="true" />
+
       <div ref={topBarRef} className={cx("rvl-bar", "rvl-top-bar", cn("topBar"))}>
         <div className={cx("rvl-header", cn("topBar"))}>{renderHeader?.(ctx)}</div>
 
