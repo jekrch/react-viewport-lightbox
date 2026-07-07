@@ -11,9 +11,11 @@
   --rvl-overlay-bg: rgba(0, 0, 0, 0.9);
   /* Opaque tint applied to the iOS Safari chrome (the status-bar strip above and
      the home-indicator strip below the viewport) while the viewer is open, via
-     a `<meta name="theme-color">` override. Must be opaque — theme-color ignores
-     alpha — so it's a dedicated var rather than the translucent overlay bg.
-     Override it to match a themed overlay. */
+     a `<meta name="theme-color">` override plus a deferred swap of the root
+     element's background (the document canvas Safari samples for the top strip
+     and overscroll areas) — see useThemeColor. Must be opaque — theme-color
+     ignores alpha — so it's a dedicated var rather than the translucent overlay
+     bg. Override it to match a themed overlay. */
   --rvl-theme-color: #000000;
   --rvl-bar-fg: rgba(255, 255, 255, 0.9);
   --rvl-bar-fg-muted: rgba(255, 255, 255, 0.5);

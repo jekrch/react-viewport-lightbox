@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useThemeColor } from "./useThemeColor";
 
@@ -7,8 +7,10 @@ function themeMeta(): HTMLMetaElement | null {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   document.querySelectorAll('meta[name="theme-color"]').forEach((el) => el.remove());
   document.documentElement.style.removeProperty("--rvl-theme-color");
+  document.documentElement.style.removeProperty("background-color");
 });
 
 describe("useThemeColor", () => {
@@ -55,5 +57,34 @@ describe("useThemeColor", () => {
 
     b.unmount();
     expect(themeMeta()).toBeNull();
+  });
+
+  it("overrides the root background after the open fade and restores it on unmount", () => {
+    vi.useFakeTimers();
+    document.documentElement.style.backgroundColor = "rgb(10, 20, 30)";
+
+    const { unmount } = renderHook(() => useThemeColor(true));
+    // Not yet swapped: at mount the backdrop is still transparent, so an
+    // immediate swap could flash a host page whose canvas bg shows through.
+    expect(document.documentElement.style.backgroundColor).toBe("rgb(10, 20, 30)");
+
+    vi.advanceTimersByTime(400);
+    const overridden = document.documentElement.style.backgroundColor;
+    expect(overridden).not.toBe("rgb(10, 20, 30)");
+    expect(overridden).not.toBe("");
+
+    unmount();
+    expect(document.documentElement.style.backgroundColor).toBe("rgb(10, 20, 30)");
+  });
+
+  it("cancels a pending root-background swap when unmounted mid-fade", () => {
+    vi.useFakeTimers();
+    document.documentElement.style.backgroundColor = "rgb(10, 20, 30)";
+
+    const { unmount } = renderHook(() => useThemeColor(true));
+    unmount();
+
+    vi.advanceTimersByTime(1000);
+    expect(document.documentElement.style.backgroundColor).toBe("rgb(10, 20, 30)");
   });
 });
