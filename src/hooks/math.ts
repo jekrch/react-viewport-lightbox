@@ -309,17 +309,36 @@ export function cropMask(insets: Insets, size: Dims, progress: number, feather: 
 }
 
 /**
- * The fade's progress a fraction `u` into a flight.
+ * The fade's progress a fraction `u` into a flight: 1 is cropped to the
+ * thumbnail's slice, 0 is the whole picture.
  *
- * Held at its cropped end for a slice of the flight — the start of an expand,
- * the end of a collapse — so the picture sits matched to the thumbnail for a
- * frame or two on the side where the hand-off happens, rather than the fade
- * finishing on the very frame the viewer mounts or tears down, which is where
- * timing slop would show.
+ * The two directions are paced differently, and deliberately so. A flight eases
+ * out hard — the image is within a few percent of its final size around
+ * halfway through the clock — which means "how far through the animation" and
+ * "how much the picture still appears to be moving" are not the same quantity,
+ * and the fade has to be paced against the second one.
+ *
+ * On a COLLAPSE that mismatch is the effect: the picture settles onto its
+ * thumbnail early and the strip it has no room for goes on dissolving off it,
+ * which is exactly the hand-off being made gradually. It only has to finish
+ * before the end, so a stray frame of timing slop can't leave a sliver to blink
+ * out with the viewer.
+ *
+ * On an EXPAND the same mismatch is a flaw: edges brightening onto a picture
+ * that has already stopped moving read as the image arriving unfinished and
+ * then correcting itself, and with the fade running to the last frame it
+ * finishes on the very tick the flight releases its transform. So the fade is
+ * compressed into the part of the flight where the picture is still visibly
+ * growing, and is a no-op well before the hand-off — after a short hold at the
+ * start, so the opening frames match the thumbnail exactly.
  */
+const COLLAPSE_FADE_END = 0.85;
+const EXPAND_FADE_FROM = 0.08;
+const EXPAND_FADE_TO = 0.45;
+
 export function cropFadeProgress(u: number, direction: "expand" | "collapse"): number {
-  const settle = 0.85;
   const clamped = Math.min(1, Math.max(0, u));
-  if (direction === "collapse") return Math.min(1, clamped / settle);
-  return 1 - Math.min(1, Math.max(0, (clamped - (1 - settle)) / settle));
+  if (direction === "collapse") return Math.min(1, clamped / COLLAPSE_FADE_END);
+  const span = (clamped - EXPAND_FADE_FROM) / (EXPAND_FADE_TO - EXPAND_FADE_FROM);
+  return 1 - Math.min(1, Math.max(0, span));
 }

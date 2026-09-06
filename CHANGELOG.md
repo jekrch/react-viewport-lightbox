@@ -3,6 +3,10 @@
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 
+## v0.9.1
+
+- **Cropped-thumbnail zoom** — no longer flickers at the end of the open.
+
 ## v0.9.0
 
 - **Cropped-thumbnail zoom** — a `getOrigin` element whose image is cropped with

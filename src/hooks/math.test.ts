@@ -325,23 +325,39 @@ describe("cropFeather", () => {
 });
 
 describe("cropFadeProgress", () => {
-  it("holds the matched state on the side the hand-off happens", () => {
-    // A collapse hands off at the end, so it is done fading before it gets
-    // there; an expand hands off at the start, so it waits before starting.
-    expect(cropFadeProgress(0.85, "collapse")).toBe(1);
-    expect(cropFadeProgress(1, "collapse")).toBe(1);
+  it("matches the thumbnail exactly at the hand-off, either way round", () => {
     expect(cropFadeProgress(0, "expand")).toBe(1);
-    expect(cropFadeProgress(0.15, "expand")).toBe(1);
+    expect(cropFadeProgress(1, "collapse")).toBe(1);
   });
 
-  it("ends where the flight does", () => {
-    expect(cropFadeProgress(0, "collapse")).toBe(0);
+  it("reaches the whole picture, and holds it, before an expand lands", () => {
+    // The flight eases out hard, so edges still brightening late in the clock
+    // sit on a picture that has stopped moving — and would finish on the very
+    // frame the transform is released.
+    expect(cropFadeProgress(0.45, "expand")).toBe(0);
+    expect(cropFadeProgress(0.6, "expand")).toBe(0);
     expect(cropFadeProgress(1, "expand")).toBe(0);
   });
 
-  it("is monotone, and one direction is the other reversed", () => {
-    for (let u = 0; u <= 1.0001; u += 0.05) {
-      expect(cropFadeProgress(u, "expand")).toBeCloseTo(cropFadeProgress(1 - u, "collapse"));
+  it("holds the thumbnail's slice for the opening frames of an expand", () => {
+    expect(cropFadeProgress(0.05, "expand")).toBe(1);
+    expect(cropFadeProgress(0.2, "expand")).toBeLessThan(1);
+  });
+
+  it("finishes a collapse before the end, so no sliver blinks out on unmount", () => {
+    expect(cropFadeProgress(0, "collapse")).toBe(0);
+    expect(cropFadeProgress(0.85, "collapse")).toBe(1);
+  });
+
+  it("is monotone in both directions", () => {
+    for (const dir of ["expand", "collapse"] as const) {
+      const sign = dir === "expand" ? -1 : 1;
+      let prev = -Infinity;
+      for (let u = 0; u <= 1.0001; u += 0.05) {
+        const v = sign * cropFadeProgress(u, dir);
+        expect(v).toBeGreaterThanOrEqual(prev);
+        prev = v;
+      }
     }
   });
 });
