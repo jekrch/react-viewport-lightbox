@@ -149,8 +149,24 @@ export interface ImageViewerProps<TData = unknown> {
    * `getBoundingClientRect()`) when you have no element to hand over; the
    * transition still plays, using the image's own corner radius. Honors
    * reduced-motion.
+   *
+   * A source element that CROPS its image — an `object-fit: cover` thumbnail,
+   * the usual shape of a gallery tile — is handled for you. The flight targets
+   * the rect the whole image would occupy at the crop's own scale, so it never
+   * squashes on the way, and the parts the thumbnail has no room for fade in
+   * and out across the flight instead of appearing and vanishing in one frame
+   * at the hand-off. `object-position` is honored. See {@link thumbnailCrop} to
+   * turn this off.
    */
   getOrigin?: (index: number) => HTMLElement | ViewerRect | null;
+
+  /**
+   * Honor a `getOrigin` element's `object-fit: cover` crop, per the note on
+   * {@link getOrigin}. Default `true`. Set `false` to treat every source
+   * element's own box as the flight's target, cropped or not — the behavior
+   * before 0.9.
+   */
+  thumbnailCrop?: boolean;
 
   // Behavior
   /** Enable zoom/pan (wheel, pinch, double-tap). Default `true`. */

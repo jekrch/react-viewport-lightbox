@@ -40,6 +40,7 @@ export function ImageViewer<TData = unknown>({
   onClose,
   onEscape,
   getOrigin,
+  thumbnailCrop = true,
   zoom = true,
   zoomToCursor = true,
   showCounter = true,
@@ -154,6 +155,7 @@ export function ImageViewer<TData = unknown>({
     playCollapse,
   } = useSharedElementZoom({
     getOrigin,
+    crop: thumbnailCrop,
     index,
     isZoomed,
     imgRef,

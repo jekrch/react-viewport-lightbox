@@ -83,7 +83,8 @@ animation and calls `onClose` after the exit completes.
 | `onNavigate`           | `(direction: "prev" \| "next") => void`                | optional   | Fired when a slide starts (before `onIndexChange`), so overlays can animate out in sync with the image.                                                                                                                                                                     |
 | `onClose`              | `() => void`                                           | required   | Called after the exit animation completes.                                                                                                                                                                                                                                  |
 | `onEscape`             | `() => boolean`                                        | optional   | Called on Escape before the viewer closes. Return `true` to mark the key handled and veto the default close (e.g. dismiss your own overlay first); `false`/`undefined` falls through to closing.                                                                            |
-| `getOrigin`            | `(index: number) => HTMLElement \| ViewerRect \| null` | optional   | Enables a shared-element "zoom from thumbnail" open/close transition. Return the source element (typically your ref) for the given index — its rect and corner radius are read for you — or a bare `ViewerRect`, or `null` to fall back to the fade. Honors reduced-motion. |
+| `getOrigin`            | `(index: number) => HTMLElement \| ViewerRect \| null` | optional   | Enables a shared-element "zoom from thumbnail" open/close transition. Return the source element (typically your ref) for the given index — its rect, corner radius, and any `object-fit: cover` crop are read for you — or a bare `ViewerRect`, or `null` to fall back to the fade. Honors reduced-motion. |
+| `thumbnailCrop`        | `boolean`                                              | `true`     | Honor a `getOrigin` element's `object-fit: cover` crop. `false` treats every source element's own box as the flight's target, cropped or not (the behavior before 0.9). |
 | `zoom`                 | `boolean`                                              | `true`     | Enable wheel/pinch/double-tap zoom + pan.                                                                                                                                                                                                                                   |
 | `zoomToCursor`         | `boolean`                                              | `true`     | Anchor wheel/pinch zoom on the pointer: scrolling zooms toward the cursor and a pinch zooms toward the gesture midpoint. Set `false` to zoom about the viewport center.                                                                                                     |
 | `showCounter`          | `boolean`                                              | `true`     | Show the `index / total` counter.                                                                                                                                                                                                                                           |
@@ -218,8 +219,31 @@ If you have no element to give (e.g. a virtualized or computed position), return
 bare `ViewerRect` instead; the transition still plays, falling back to the image's
 own corner radius (`--rvl-radius`).
 
-The transition reads most seamlessly when the thumbnail and full image share an
-aspect ratio (the thumbnail is, after all, the same picture).
+#### Cropped thumbnails
+
+A gallery tile is usually a **crop** — a fixed box with `object-fit: cover` over
+it — so it shows a slice of its image rather than the whole thing. That is
+handled for you, and it is worth knowing what the viewer does with it, because
+the naive version of this transition looks wrong in two specific ways.
+
+Flying an uncropped image into the tile's literal box **squashes** it for the
+length of the animation, hardest on exactly the images the crop works hardest
+on. So the flight targets the rect the whole image would occupy at the crop's
+own scale: the slice on screen still lines up with the tile, and the picture
+keeps its proportions the whole way. `object-position` is honored, so a tile
+that holds its crop off-centre (`center 22%` for a face, say) still lines up.
+
+That leaves the parts the tile has no room for painted outside it — appearing
+from nowhere on the first frame of an expand, and still on screen at the end of
+a collapse, to blink out a frame later when the viewer unmounts. So they fade,
+across the flight, on a mask that holds still while its opacity goes. Fading
+rather than cropping inward is deliberate: an aperture closing onto the tile
+lands in the right place, but a hard edge sweeping across the picture at the end
+of a flight reads as another thing happening rather than as the flight
+finishing.
+
+None of it needs configuration — hand over the element and it applies when the
+element crops. Pass `thumbnailCrop={false}` to switch it off.
 
 ## Slots & `ViewerContext`
 

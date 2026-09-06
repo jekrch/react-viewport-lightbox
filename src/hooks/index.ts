@@ -13,7 +13,15 @@ export { useThemeColor } from "./useThemeColor";
 export {
   clampTranslate,
   resolveSlideDirection,
+  coverRect,
+  cropInsets,
+  cropsAnything,
+  cropFeather,
+  cropMask,
+  cropFadeProgress,
+  parseObjectPosition,
   type Dims,
+  type Insets,
   type SlideAction,
   type ResolveSlideArgs,
 } from "./math";

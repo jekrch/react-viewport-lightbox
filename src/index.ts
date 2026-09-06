@@ -21,6 +21,13 @@ export {
   useBodyScrollLock,
   clampTranslate,
   resolveSlideDirection,
+  coverRect,
+  cropInsets,
+  cropsAnything,
+  cropFeather,
+  cropMask,
+  cropFadeProgress,
+  parseObjectPosition,
 } from "./hooks";
 
 export { useFocusTrap } from "./hooks/useFocusTrap";
@@ -30,6 +37,7 @@ export type {
   ImageTransform,
   SlideNavigationState,
   Dims,
+  Insets,
   SlideAction,
   ResolveSlideArgs,
 } from "./hooks";

@@ -3,6 +3,8 @@
  * React and DOM globals so they can be unit-tested in isolation.
  */
 
+import type { ViewerRect } from "../types";
+
 export interface Dims {
   width: number;
   height: number;
@@ -150,4 +152,170 @@ export function resolveSlideDirection({
   if (offset > 0 && hasPrev && committed) return "prev";
   if (offset < 0 && hasNext && committed) return "next";
   return "snap";
+}
+
+/* Cropped thumbnails ------------------------------------------------------- */
+
+/**
+ * A rectangle's insets, in px.
+ */
+export interface Insets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+/** Where an `object-position` keyword sits along its axis, as a fraction. */
+const POSITION_KEYWORDS: Record<string, number> = {
+  left: 0,
+  top: 0,
+  center: 0.5,
+  right: 1,
+  bottom: 1,
+};
+
+function positionAxis(token: string | undefined, fallback: number): number {
+  if (!token) return fallback;
+  const keyword = POSITION_KEYWORDS[token];
+  if (keyword !== undefined) return keyword;
+  const pct = /^(-?[\d.]+)%$/.exec(token);
+  return pct ? Number(pct[1]) / 100 : fallback;
+}
+
+/**
+ * Read a computed `object-position` as a pair of fractions: 0 pins the image's
+ * leading edge to its box's, 1 its trailing edge, 0.5 centers it.
+ *
+ * Browsers compute the property to percentages, which is what this reads. A
+ * length is an offset in px rather than a fraction of the overflow, so it can't
+ * be expressed here and is treated as centered rather than guessed at.
+ */
+export function parseObjectPosition(value: string): { x: number; y: number } {
+  const parts = value.trim().split(/\s+/);
+  return { x: positionAxis(parts[0], 0.5), y: positionAxis(parts[1], 0.5) };
+}
+
+/**
+ * The rect the WHOLE image occupies when `object-fit: cover` fills `box` with
+ * it — larger than `box` on one axis, that overflow being what the box crops.
+ *
+ * This is the rect a shared-element flight should target for a cropped
+ * thumbnail. Flying an uncropped image into the thumbnail's literal box
+ * squashes it for the length of the animation, hardest on exactly the images
+ * the crop works hardest on; landing on the cover rect instead keeps the flight
+ * in proportion, and the slice actually on screen still lines up with the
+ * thumbnail.
+ */
+export function coverRect(box: ViewerRect, natural: Dims, position: { x: number; y: number }): ViewerRect {
+  const scale = Math.max(box.width / natural.width, box.height / natural.height);
+  const width = natural.width * scale;
+  const height = natural.height * scale;
+  return {
+    left: box.left + (box.width - width) * position.x,
+    top: box.top + (box.height - height) * position.y,
+    width,
+    height,
+  };
+}
+
+/**
+ * The crop a thumbnail imposes, in the *untransformed* image's own pixels.
+ *
+ * `rest` is the flying image at rest, `origin` the rect it lands on, and `clip`
+ * the window the thumbnail leaves open on that rect. Masks and clips apply
+ * before an element's transform, so the insets are divided back through the
+ * flight's scale. Negative insets — a thumbnail hanging off the viewport edge,
+ * a rounding wobble — are floored at zero.
+ */
+export function cropInsets(rest: ViewerRect, origin: ViewerRect, clip: ViewerRect): Insets {
+  const sx = origin.width / rest.width;
+  const sy = origin.height / rest.height;
+  return {
+    top: Math.max(0, (clip.top - origin.top) / sy),
+    right: Math.max(0, (origin.left + origin.width - (clip.left + clip.width)) / sx),
+    bottom: Math.max(0, (origin.top + origin.height - (clip.top + clip.height)) / sy),
+    left: Math.max(0, (clip.left - origin.left) / sx),
+  };
+}
+
+/** True when a crop takes anything off worth animating. */
+export function cropsAnything(insets: Insets): boolean {
+  return insets.top + insets.right + insets.bottom + insets.left > 0.5;
+}
+
+/**
+ * How soft the join between the kept slice and the faded strip is at its
+ * softest: a share of the strip itself, so it reads the same on a thumbnail
+ * taking a sliver off the side and on one taking half the picture.
+ */
+export function cropFeather(insets: Insets): number {
+  const horizontal = insets.left + insets.right > 0;
+  const widest = horizontal
+    ? Math.max(insets.left, insets.right)
+    : Math.max(insets.top, insets.bottom);
+  return widest * 0.4;
+}
+
+/**
+ * The mask that fades a cropped thumbnail's discarded strip in or out over a
+ * shared-element flight.
+ *
+ * A cropped thumbnail shows a slice of its image, so the flight has to land on
+ * the whole image at the crop's scale (see {@link coverRect}) — which leaves
+ * the cropped-away parts painted on screen at the end of a collapse, to blink
+ * out with the viewer a frame later, and painted from the first frame of an
+ * expand, to appear out of nowhere. Fading them is what makes the hand-off
+ * invisible.
+ *
+ * It fades rather than closing inward. An aperture — a hard edge sweeping onto
+ * the thumbnail's box — lands in the right place, but a cut moving across the
+ * picture at the end of a flight reads as another thing happening rather than
+ * as the flight finishing. So the geometry holds still: the strip sits where it
+ * always was and its opacity goes.
+ *
+ * `progress` is how far the fade has gone: 0 is the whole picture untouched, 1
+ * is only the slice the thumbnail shows. `feather` softens the join, in the
+ * image's own pixels, and shrinks along with the fade so the last frame is a
+ * clean edge on the thumbnail's box rather than a gradient hanging off it.
+ *
+ * One gradient is the whole mask because a `cover` crop bites on exactly one
+ * axis: the scale is the *larger* of the two ratios, so only the other one
+ * overflows.
+ */
+export function cropMask(insets: Insets, size: Dims, progress: number, feather: number): string {
+  const horizontal = insets.left + insets.right > 0;
+  const lead = horizontal ? insets.left : insets.top;
+  const trail = horizontal ? insets.right : insets.bottom;
+  const extent = horizontal ? size.width : size.height;
+
+  const alpha = 1 - Math.min(1, Math.max(0, progress));
+  const ramp = feather * alpha;
+  const px = (n: number) => `${Math.round(n * 100) / 100}px`;
+  const stop = (a: number, at: number) => `rgba(0,0,0,${Math.round(a * 1000) / 1000}) ${px(at)}`;
+
+  return `linear-gradient(${horizontal ? "to right" : "to bottom"}, ${[
+    stop(alpha, 0),
+    stop(alpha, Math.max(0, lead - ramp)),
+    stop(1, lead),
+    stop(1, extent - trail),
+    stop(alpha, Math.min(extent, extent - trail + ramp)),
+    stop(alpha, extent),
+  ].join(", ")})`;
+}
+
+/**
+ * The fade's progress a fraction `u` into a flight.
+ *
+ * Held at its cropped end for a slice of the flight — the start of an expand,
+ * the end of a collapse — so the picture sits matched to the thumbnail for a
+ * frame or two on the side where the hand-off happens, rather than the fade
+ * finishing on the very frame the viewer mounts or tears down, which is where
+ * timing slop would show.
+ */
+export function cropFadeProgress(u: number, direction: "expand" | "collapse"): number {
+  const settle = 0.85;
+  const clamped = Math.min(1, Math.max(0, u));
+  if (direction === "collapse") return Math.min(1, clamped / settle);
+  return 1 - Math.min(1, Math.max(0, (clamped - (1 - settle)) / settle));
 }

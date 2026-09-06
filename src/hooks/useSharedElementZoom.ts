@@ -1,5 +1,15 @@
 import { useCallback, useLayoutEffect, useEffect, useRef, useState, type RefObject } from "react";
 import type { ViewerRect } from "../types";
+import {
+  coverRect,
+  cropFadeProgress,
+  cropFeather,
+  cropInsets,
+  cropMask,
+  cropsAnything,
+  parseObjectPosition,
+  type Insets,
+} from "./math";
 
 // Duration of the shared-element zoom (open expand / close collapse) in ms.
 export const ANIM_MS = 250;
@@ -22,6 +32,8 @@ export const VIEWPORT_H =
     : "100vh";
 // Decelerating ease for the shared-element zoom so it settles softly.
 const ZOOM_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+// Samples of the cropped-thumbnail fade; ~20ms apart, so finer than a frame.
+const CROP_FADE_STEPS = 12;
 
 export function prefersReducedMotion(): boolean {
   if (typeof window === "undefined" || !window.matchMedia) return false;
@@ -68,25 +80,104 @@ interface ResolvedOrigin {
   rect: ViewerRect;
   /** Thumbnail corner radius in px when the source was an element; null for a bare rect. */
   radius: number | null;
+  /**
+   * The window the thumbnail leaves open on {@link rect} when it CROPS its
+   * image, and `rect` is therefore larger than the thumbnail itself. Null when
+   * the thumbnail shows its whole image, which is when the two are the same box.
+   */
+  clip: ViewerRect | null;
 }
 
 /**
- * Normalize a `getOrigin` result. An element yields both its on-screen rect and
- * its computed corner radius (so the zoom can match the thumbnail's rounding
- * exactly); a bare {@link ViewerRect} yields the rect with an unknown radius
- * (the zoom falls back to the image's own). Element-ness is duck-typed on
- * `getBoundingClientRect` so a plain rect object never trips it.
+ * The rect a cropping thumbnail's flight should target, and the window it
+ * leaves open on it — or null when the element isn't cropping anything.
+ *
+ * A thumbnail with `object-fit: cover` over it shows a SLICE of its image, so
+ * its own box is the wrong target: flying an uncropped image into it squashes
+ * the picture for the length of the animation, hardest on exactly the images
+ * the crop works hardest on. The right target is the rect the whole image would
+ * occupy at the crop's own scale — the slice on screen still lines up with the
+ * thumbnail, and the flight stays in proportion the whole way.
  */
-function resolveOrigin(src: HTMLElement | ViewerRect | null | undefined): ResolvedOrigin | null {
+function resolveCrop(el: HTMLElement): { rect: ViewerRect; clip: ViewerRect } | null {
+  const img = el.querySelector("img");
+  if (!img) return null;
+  const style = getComputedStyle(img);
+  if (style.objectFit !== "cover") return null;
+  const { naturalWidth, naturalHeight } = img;
+  // The img's own box rather than the element's: a thumbnail may carry a border,
+  // and it is the painted image the crop is cut from.
+  const box = img.getBoundingClientRect();
+  if (!naturalWidth || !naturalHeight || !box.width || !box.height) return null;
+  const rect = coverRect(
+    box,
+    { width: naturalWidth, height: naturalHeight },
+    parseObjectPosition(style.objectPosition),
+  );
+  return { rect, clip: box };
+}
+
+/**
+ * Normalize a `getOrigin` result. An element yields its on-screen rect and its
+ * computed corner radius (so the zoom can match the thumbnail's rounding
+ * exactly), plus — where the element crops its image — the wider rect the
+ * flight should target and the window the crop leaves open on it. A bare
+ * {@link ViewerRect} yields the rect with an unknown radius (the zoom falls
+ * back to the image's own) and no crop, since there is no element to read one
+ * from. Element-ness is duck-typed on `getBoundingClientRect` so a plain rect
+ * object never trips it.
+ */
+function resolveOrigin(
+  src: HTMLElement | ViewerRect | null | undefined,
+  crop: boolean,
+): ResolvedOrigin | null {
   if (!src) return null;
   if (typeof (src as HTMLElement).getBoundingClientRect === "function") {
     const el = src as HTMLElement;
+    const cropped = crop ? resolveCrop(el) : null;
     return {
-      rect: el.getBoundingClientRect(),
+      rect: cropped ? cropped.rect : el.getBoundingClientRect(),
       radius: parseFloat(getComputedStyle(el).borderRadius) || 0,
+      clip: cropped ? cropped.clip : null,
     };
   }
-  return { rect: src as ViewerRect, radius: null };
+  return { rect: src as ViewerRect, radius: null, clip: null };
+}
+
+/**
+ * Fade the cropped-away strip of a flying image in or out across the flight.
+ *
+ * Landing on the cover rect (see {@link resolveCrop}) leaves the parts the
+ * thumbnail crops off painted on screen — at the end of a collapse, where they
+ * blink out with the viewer a frame later, and from the first frame of an
+ * expand, where they appear out of nowhere. Neither reads as the flight; both
+ * read as a glitch. So they fade, on a mask that holds still while its opacity
+ * goes, sampled into keyframes because the curve isn't one CSS can express.
+ *
+ * Returns the animation so the caller can tear it down, or null when the
+ * thumbnail crops nothing and there is no strip to fade.
+ */
+function playCropFade(
+  img: HTMLImageElement,
+  rest: ViewerRect,
+  origin: ResolvedOrigin,
+  direction: "expand" | "collapse",
+): Animation | null {
+  if (!origin.clip || !rest.width || !rest.height) return null;
+  const insets: Insets = cropInsets(rest, origin.rect, origin.clip);
+  if (!cropsAnything(insets)) return null;
+
+  const size = { width: rest.width, height: rest.height };
+  const feather = cropFeather(insets);
+  const frames = Array.from({ length: CROP_FADE_STEPS + 1 }, (_, i) => {
+    const u = i / CROP_FADE_STEPS;
+    const mask = cropMask(insets, size, cropFadeProgress(u, direction), feather);
+    return { offset: u, maskImage: mask, webkitMaskImage: mask };
+  });
+  // Linear between the samples: an even fade is the point, and the flight's own
+  // decelerating ease run over the top of it front-loads the whole thing into
+  // the first few frames, which is the lurch this exists to avoid.
+  return img.animate(frames, { duration: ANIM_MS, easing: "linear", fill: "forwards" });
 }
 
 /**
@@ -107,6 +198,8 @@ function isRectInViewport(rect: ViewerRect): boolean {
 
 export interface SharedElementZoomArgs {
   getOrigin?: (index: number) => HTMLElement | ViewerRect | null;
+  /** Honor a source element's `object-fit: cover` crop. Default `true`. */
+  crop?: boolean;
   index: number;
   isZoomed: boolean;
   imgRef: RefObject<HTMLImageElement | null>;
@@ -152,6 +245,7 @@ export interface SharedElementZoomState {
  */
 export function useSharedElementZoom({
   getOrigin,
+  crop = true,
   index,
   isZoomed,
   imgRef,
@@ -190,7 +284,7 @@ export function useSharedElementZoom({
     if (entryStartedRef.current) return;
     if (!getOrigin || prefersReducedMotion()) return;
     const img = imgRef.current;
-    const origin = resolveOrigin(getOrigin(index));
+    const origin = resolveOrigin(getOrigin(index), crop);
     if (!origin || !canAnimate(img)) return;
     const thumb = origin.rect;
 
@@ -255,6 +349,11 @@ export function useSharedElementZoom({
       ],
       { duration: ANIM_MS, easing: ZOOM_EASE, fill: "forwards" },
     );
+    // Where the thumbnail crops, the image starts out showing only the slice the
+    // thumbnail shows and the rest fades up as it flies, rather than the whole
+    // picture being there from the first frame, overflowing a thumbnail that
+    // never showed that much of it.
+    const fade = playCropFade(img, imgRect, origin, "expand");
     const cleanup = () => {
       // Match the inline base to the held resting pose, then release the fill:
       // computed style stays "none" across the swap, so there's no flicker, and
@@ -266,11 +365,16 @@ export function useSharedElementZoom({
       // "" with no following render could briefly drop the constraint entirely.
       img.style.maxHeight = lockedMaxHeight;
       anim.cancel();
+      // Release the mask too: a held fill would leave the resting image masked,
+      // and a close mid-flight starts a fade of its own on the same property.
+      fade?.cancel();
+      img.style.maskImage = "";
+      img.style.webkitMaskImage = "";
       entryCleanupRef.current = null;
     };
     entryCleanupRef.current = cleanup;
     anim.onfinish = cleanup;
-  }, [getOrigin, index, imgRef, imgWrapperRef, bottomBarRef]);
+  }, [getOrigin, index, crop, imgRef, imgWrapperRef, bottomBarRef]);
 
   // Mark the opening image ready once it has both loaded and decoded. `decode()`
   // forces the decode up front so revealing the image can't flash; fall back to
@@ -329,7 +433,7 @@ export function useSharedElementZoom({
     // screen, and the image isn't zoomed (a zoomed image's box no longer
     // matches the thumbnail; an off-screen thumbnail would fly to nowhere, so
     // fall back to the plain fade).
-    const origin = !reduce && !isZoomed ? resolveOrigin(getOrigin?.(index)) : null;
+    const origin = !reduce && !isZoomed ? resolveOrigin(getOrigin?.(index), crop) : null;
     const thumb = origin && isRectInViewport(origin.rect) ? origin.rect : null;
     const img = imgRef.current;
     if (!thumb || !canAnimate(img)) return;
@@ -361,7 +465,11 @@ export function useSharedElementZoom({
       ],
       { duration: ANIM_MS, easing: ZOOM_EASE, fill: "forwards" },
     );
-  }, [getOrigin, index, isZoomed, imgRef, imgWrapperRef]);
+    // Where the thumbnail crops, take the parts it has no room for down to
+    // nothing on the way, so there is nothing left to blink out when the viewer
+    // unmounts on top of the landed image.
+    playCropFade(img, imgRect, origin!, "collapse");
+  }, [getOrigin, index, isZoomed, crop, imgRef, imgWrapperRef]);
 
   return {
     gateEntry,
