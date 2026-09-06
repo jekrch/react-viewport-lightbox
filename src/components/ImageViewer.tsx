@@ -5,6 +5,7 @@ import { useSlideNavigation } from "../hooks/useSlideNavigation";
 import { useGestureHandler } from "../hooks/useGestureHandler";
 import { useBarMeasure } from "../hooks/useBarMeasure";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
+import { useViewportHeight } from "../hooks/useViewportHeight";
 import { useThemeColor } from "../hooks/useThemeColor";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import {
@@ -12,7 +13,6 @@ import {
   prefersReducedMotion,
   ANIM_MS,
   IMG_PADDING,
-  VIEWPORT_H,
 } from "../hooks/useSharedElementZoom";
 import { defaultIcons } from "./icons";
 import { NavButton } from "./NavButton";
@@ -113,6 +113,10 @@ export function ImageViewer<TData = unknown>({
   useThemeColor(true);
   useFocusTrap(containerRef, visible && !closing);
   const { topBarH, bottomBarH } = useBarMeasure(topBarRef, bottomBarRef, index);
+  // Size the image against the overlay's own box rather than a viewport unit, so
+  // mobile browser chrome appearing/disappearing can't resize it out from under
+  // the open animation (see useViewportHeight).
+  const viewportH = useViewportHeight(containerRef);
 
   const zoomPan = useImageZoomPan(imgWrapperRef, index, zoom, zoomToCursor);
   const {
@@ -161,6 +165,7 @@ export function ImageViewer<TData = unknown>({
     imgRef,
     imgWrapperRef,
     bottomBarRef,
+    viewportH,
     measureBaseDims,
   });
 
@@ -414,7 +419,7 @@ export function ImageViewer<TData = unknown>({
   if (!item) return null;
 
   const reservedH = bottomBarH + IMG_PADDING * 2;
-  const imgMaxHeight = `calc(${VIEWPORT_H} - ${reservedH}px)`;
+  const imgMaxHeight = `calc(${viewportH} - ${reservedH}px)`;
   const imgStyle: React.CSSProperties = { maxHeight: imgMaxHeight };
 
   // Numbers become px; strings pass through (e.g. "1.5rem"). Only emit vars that

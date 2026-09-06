@@ -207,7 +207,11 @@ export function parseObjectPosition(value: string): { x: number; y: number } {
  * in proportion, and the slice actually on screen still lines up with the
  * thumbnail.
  */
-export function coverRect(box: ViewerRect, natural: Dims, position: { x: number; y: number }): ViewerRect {
+export function coverRect(
+  box: ViewerRect,
+  natural: Dims,
+  position: { x: number; y: number },
+): ViewerRect {
   const scale = Math.max(box.width / natural.width, box.height / natural.height);
   const width = natural.width * scale;
   const height = natural.height * scale;

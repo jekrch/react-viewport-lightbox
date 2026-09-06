@@ -9,6 +9,7 @@ export { useSlideNavigation, type SlideNavigationState } from "./useSlideNavigat
 export { useGestureHandler } from "./useGestureHandler";
 export { useBarMeasure } from "./useBarMeasure";
 export { useBodyScrollLock } from "./useBodyScrollLock";
+export { useViewportHeight } from "./useViewportHeight";
 export { useThemeColor } from "./useThemeColor";
 export {
   clampTranslate,
