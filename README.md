@@ -423,8 +423,10 @@ import {
 } from "@jekrch/react-viewport-lightbox";
 ```
 
-The pure geometry/threshold helpers (`clampTranslate`, `resolveSlideDirection`) are
-exported too.
+The pure geometry/threshold helpers are exported too: `clampTranslate`,
+`resolveSlideDirection`, and the thumbnail-crop geometry behind the shared-element
+zoom (`coverRect`, `cropInsets`, `cropsAnything`, `cropFeather`, `cropMask`,
+`cropFadeProgress`, `parseObjectPosition`).
 
 ## License
 

@@ -3,6 +3,19 @@
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 
+## v0.9.0
+
+- **Cropped-thumbnail zoom** — a `getOrigin` element whose image is cropped with
+  `object-fit: cover` no longer squashes during the flight, and honors
+  `object-position`; picked up with no code change.
+- **`thumbnailCrop`** — new prop to opt out of that handling (default `true`);
+  `false` restores the pre-0.9 behavior of flying to the source element's own box.
+- **Mobile open glitch fix** — opening the viewer from a scrolled-down gallery no
+  longer resizes and re-centers the image a beat after the animation on iOS Safari.
+- **Crop geometry helpers** — `coverRect`, `cropInsets`, `cropsAnything`,
+  `cropFeather`, `cropMask`, `cropFadeProgress`, `parseObjectPosition`, and the
+  `Insets` type are now exported for headless use.
+
 ## v0.8.0
 
 - **iOS Safari 26 chrome tint** — the status-bar strip and home-indicator band
