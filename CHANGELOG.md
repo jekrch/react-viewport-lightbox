@@ -3,6 +3,10 @@
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 
+## v0.9.2
+
+- **Zoom-from-thumbnail** — no longer stutters on iOS Safari when opened from a scrolled page.
+
 ## v0.9.1
 
 - **Cropped-thumbnail zoom** — no longer flickers at the end of the open.

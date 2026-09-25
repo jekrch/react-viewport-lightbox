@@ -8,6 +8,7 @@ afterEach(() => {
   document.body.style.position = "";
   document.body.style.top = "";
   document.body.style.width = "";
+  document.documentElement.style.minHeight = "";
 });
 
 describe("useBodyScrollLock", () => {
@@ -27,6 +28,28 @@ describe("useBodyScrollLock", () => {
     expect(document.body.style.position).toBe("");
     expect(document.body.style.top).toBe("");
     expect(document.body.style.width).toBe("");
+  });
+
+  it("holds the root's scroll height while pinned and releases it on unmount", () => {
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      configurable: true,
+      get: () => 5000,
+    });
+    try {
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(document.documentElement.style.minHeight).toBe("5000px");
+      unmount();
+      expect(document.documentElement.style.minHeight).toBe("");
+    } finally {
+      delete (document.documentElement as { scrollHeight?: number }).scrollHeight;
+    }
+  });
+
+  it("restores a host's own root min-height on unmount", () => {
+    document.documentElement.style.minHeight = "100%";
+    const { unmount } = renderHook(() => useBodyScrollLock(true));
+    unmount();
+    expect(document.documentElement.style.minHeight).toBe("100%");
   });
 
   it("does not lock when isLocked is false", () => {

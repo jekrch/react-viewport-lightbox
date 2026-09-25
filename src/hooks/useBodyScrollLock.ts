@@ -16,6 +16,19 @@ import { useLayoutEffect } from "react";
  * position. Pinning records the exact offset and restores it explicitly via
  * `scrollTo`, so the page holds still no matter where it was scrolled.
  *
+ * Pinning alone takes the body out of flow, though, which collapses the
+ * document to a single viewport: the scroll offset clamps to 0 and fires a
+ * `scroll` event, and iOS Safari — which had minimized its toolbars on the way
+ * down — snaps them back out, resizing the viewport. Both land in the middle of
+ * the open animation, and both only when the page was scrolled, which is why an
+ * open from the top of a long page is smooth and one from halfway down stutters:
+ * the host page answers the scroll and the resize with its own work (a full
+ * relayout at the least), and the flight drops frames under it. So the root
+ * keeps the scroll height it had, via `min-height`, for as long as the body is
+ * pinned. The offset never moves, no scroll event fires, and Safari has no
+ * reason to touch its chrome. The body's `overflow: hidden` still propagates to
+ * the viewport, so that retained range can't be scrolled by the user.
+ *
  * If the page already reserves the scrollbar's space with `scrollbar-gutter:
  * stable` on the root element, that gutter stays reserved while locked, so the
  * padding compensation is skipped — adding it on top would shift the page by a
@@ -39,6 +52,7 @@ let previousPaddingRight = "";
 let previousPosition = "";
 let previousTop = "";
 let previousWidth = "";
+let previousRootMinHeight = "";
 let lockedScrollY = 0;
 
 export function useBodyScrollLock(isLocked: boolean): void {
@@ -55,7 +69,11 @@ export function useBodyScrollLock(isLocked: boolean): void {
       const rootGutter = window.getComputedStyle(document.documentElement).scrollbarGutter;
       const reservesGutter = typeof rootGutter === "string" && rootGutter.includes("stable");
 
+      const root = document.documentElement;
       lockedScrollY = window.scrollY;
+      // Read before the body is pinned, while it still has its real height.
+      const scrollHeight = root.scrollHeight;
+      previousRootMinHeight = root.style.minHeight;
       previousOverflow = document.body.style.overflow;
       previousPaddingRight = document.body.style.paddingRight;
       previousPosition = document.body.style.position;
@@ -69,6 +87,8 @@ export function useBodyScrollLock(isLocked: boolean): void {
       document.body.style.position = "fixed";
       document.body.style.top = `-${lockedScrollY}px`;
       document.body.style.width = "100%";
+      // Hold the scroll range the pinned body just vacated (see above).
+      root.style.minHeight = `${scrollHeight}px`;
       if (scrollbarWidth > 0 && !reservesGutter) {
         const currentPaddingRight =
           parseFloat(window.getComputedStyle(document.body).paddingRight) || 0;
@@ -85,7 +105,9 @@ export function useBodyScrollLock(isLocked: boolean): void {
         document.body.style.position = previousPosition;
         document.body.style.top = previousTop;
         document.body.style.width = previousWidth;
-        // Restore the exact offset the page was pinned at.
+        document.documentElement.style.minHeight = previousRootMinHeight;
+        // Restore the exact offset the page was pinned at — normally a no-op,
+        // since the held range kept it, unless something scrolled meanwhile.
         window.scrollTo(0, lockedScrollY);
       }
     };

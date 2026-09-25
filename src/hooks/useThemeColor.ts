@@ -53,19 +53,19 @@ let previousBodyBg = "";
 
 /**
  * iOS Safari samples the page for its chrome tint on scroll events and holds
- * the result until the next one. Opening the viewer fires exactly one: the
- * scroll lock pins the body, the scroll offset clamps to 0, and Safari
- * resamples — on a frame where the backdrop is still transparent, so it
- * captures the host page behind the viewer. The locked page never scrolls
- * again, so that stale tint is frozen for the whole session no matter what
- * theme-color / canvas color / pixels say afterwards.
+ * the result until the next one. The locked page never scrolls on its own (the
+ * scroll lock holds the offset exactly where it was), so whatever Safari last
+ * sampled — the host page, from before the open — would stay frozen for the
+ * whole session no matter what theme-color / canvas color / pixels say.
  *
- * This fires one more real scroll event once the overlay is opaque: grant the
- * root scroller 2px of temporary scroll range, nudge to 1 and back. Every
- * on-screen layer is `position: fixed` (the pinned body and the overlay), so
- * nothing visibly moves — but Safari resamples against the dark viewer.
- * iOS-only: elsewhere it's dead weight, and a synthetic window scroll could
- * confuse host scroll listeners.
+ * This fires one real scroll event once the overlay is opaque: nudge the root
+ * scroller a pixel off its held offset and back. Every on-screen layer is
+ * `position: fixed` (the pinned body and the overlay), so nothing visibly
+ * moves — but Safari resamples against the dark viewer. The nudge goes up where
+ * it can, so it never needs range past the held bottom; a page too short to
+ * scroll at all is lent 2px of temporary range, as a page at offset 0 still
+ * needs somewhere to go. iOS-only: elsewhere it's dead weight, and a synthetic
+ * window scroll could confuse host scroll listeners.
  */
 function nudgeSafariResample(): void {
   const isIOS =
@@ -74,15 +74,19 @@ function nudgeSafariResample(): void {
   if (!isIOS) return;
 
   const root = document.documentElement;
+  const heldY = window.scrollY;
   const previousMinHeight = root.style.minHeight;
-  root.style.minHeight = `${root.clientHeight + 2}px`;
-  window.scrollTo(0, 1);
+  const lend = heldY < 1 && root.scrollHeight - root.clientHeight < 1;
+  const lent = `${root.clientHeight + 2}px`;
+  if (lend) root.style.minHeight = lent;
+  window.scrollTo(0, heldY >= 1 ? heldY - 1 : heldY + 1);
   // Not canceled on cleanup: the callback must run to restore minHeight, and
   // the scroll-back is guarded so a close in this frame gap (after which the
-  // scroll lock has restored the page's real offset) isn't yanked back to 0.
+  // scroll lock has restored the page's real offset) isn't yanked back.
   requestAnimationFrame(() => {
-    if (activeCount > 0) window.scrollTo(0, 0);
-    root.style.minHeight = previousMinHeight;
+    if (activeCount > 0) window.scrollTo(0, heldY);
+    // Only if still ours: a close in the gap has already put the root back.
+    if (lend && root.style.minHeight === lent) root.style.minHeight = previousMinHeight;
   });
 }
 
