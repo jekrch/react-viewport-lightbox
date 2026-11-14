@@ -6,6 +6,8 @@ See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 ## v0.10.1
 
 - **No page shift with `scrollbar-gutter: stable`** — on a scrolled page, opening the viewer no longer narrows the page by a scrollbar's width (and the overlay no longer widens at close). Chrome's root `clientWidth` grows under a reserved gutter once the scrollbar hides; the lock now measures the root's laid-out width instead.
+- **Scroll position held while open** — the lock now holds the page's scroll range before pinning it, so a scrolled page no longer reads as scrolled to the top while the viewer is open. With `history` on, closing could leave you at the top of the page.
+- **Faster open on large pages** — `--rvl-scrollbar-width` is only written when there's a scrollbar width to compensate for. Writing it at all restyled the whole page at open and close (tens of ms on a big gallery); it's now left unset on touch devices, overlay scrollbars, and stable gutters, where your `0px` fallback applies.
 
 ## v0.10.0
 

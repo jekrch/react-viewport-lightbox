@@ -17,9 +17,14 @@ import { useLayoutEffect } from "react";
  * `position: fixed` elements in the host page are laid out against the
  * viewport, not the body, so the lock can't hold them still on its own. It
  * publishes the width it compensates for as `--rvl-scrollbar-width` on the root
- * element while locked (`0px` when there's nothing to compensate), for them to
- * opt in: `padding-right: var(--rvl-scrollbar-width, 0px)` on a full-width bar,
+ * element while locked, for them to opt in:
+ * `padding-right: var(--rvl-scrollbar-width, 0px)` on a full-width bar,
  * `right: calc(1rem + var(--rvl-scrollbar-width, 0px))` on a corner button.
+ * Only when there IS something to compensate: an inherited custom property
+ * changing on the root restyles every element in the page, a full-document
+ * style recalc landing right in the open (tens of ms on a large page). With no
+ * scrollbar width to report — touch devices, overlay scrollbars, a stable
+ * gutter — the variable is left unset and the `0px` fallback applies.
  *
  * The page is pinned with `position: fixed` and `top: -scrollY` rather than a
  * plain `overflow: hidden`. Overflow-only locking leaves the restored scroll
@@ -114,6 +119,13 @@ export function useBodyScrollLock(isLocked: boolean): void {
       previousLeft = document.body.style.left;
       previousRight = document.body.style.right;
       previousScrollbarVar = root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR);
+      // Hold the scroll range the body is about to vacate (see above) BEFORE
+      // pinning it. The width measurement below forces a layout; with the body
+      // already out of flow and no range held, that layout collapses the
+      // document to one viewport and clamps the scroll offset to 0 — the page
+      // then reads as scrolled to the top for as long as it's locked, and a
+      // history step back on close restores that 0.
+      root.style.minHeight = `${scrollHeight}px`;
       // Pin the page at its current offset. `left`/`right` give the out-of-flow
       // body the containing width it had in flow — the viewport minus the
       // scrollbar it just lost (see above); `overflow: hidden` guards against a
@@ -129,9 +141,9 @@ export function useBodyScrollLock(isLocked: boolean): void {
       const gained = hasScrollbar ? root.getBoundingClientRect().width - widthBefore : 0;
       compensation = gained >= 0.5 ? gained : 0;
       if (compensation > 0) document.body.style.right = `${compensation}px`;
-      root.style.setProperty(SCROLLBAR_WIDTH_VAR, `${compensation}px`);
-      // Hold the scroll range the pinned body just vacated (see above).
-      root.style.minHeight = `${scrollHeight}px`;
+      // Only when there's a width to report (see above): writing it at all
+      // restyles the whole page.
+      if (compensation > 0) root.style.setProperty(SCROLLBAR_WIDTH_VAR, `${compensation}px`);
     }
     lockCount += 1;
 
@@ -145,8 +157,11 @@ export function useBodyScrollLock(isLocked: boolean): void {
         document.body.style.left = previousLeft;
         document.body.style.right = previousRight;
         root.style.minHeight = previousRootMinHeight;
-        if (previousScrollbarVar) root.style.setProperty(SCROLLBAR_WIDTH_VAR, previousScrollbarVar);
-        else root.style.removeProperty(SCROLLBAR_WIDTH_VAR);
+        if (compensation > 0) {
+          if (previousScrollbarVar)
+            root.style.setProperty(SCROLLBAR_WIDTH_VAR, previousScrollbarVar);
+          else root.style.removeProperty(SCROLLBAR_WIDTH_VAR);
+        }
         compensation = 0;
         // Restore the exact offset the page was pinned at — normally a no-op,
         // since the held range kept it, unless something scrolled meanwhile.

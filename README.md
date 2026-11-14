@@ -531,7 +531,7 @@ setup. A root that keeps its scrollbar space anyway (`scrollbar-gutter: stable`,
 `position: fixed` elements in your page (a fixed header, a floating button) are laid
 out against the viewport rather than the page, so the lock can't hold them still by
 itself. While locked, it sets `--rvl-scrollbar-width` on `<html>` to the width it's
-compensating for (`0px` when there's none), so they can opt in with one line:
+compensating for, so they can opt in with one line:
 
 ```css
 .site-header {
@@ -542,7 +542,9 @@ compensating for (`0px` when there's none), so they can opt in with one line:
 }
 ```
 
-The variable is removed when the viewer closes, so keep the `0px` fallback.
+The variable is only set while there's a width to compensate for (never on touch
+devices, overlay scrollbars, or a stable gutter, where nothing shifts), and is removed
+when the viewer closes, so keep the `0px` fallback.
 
 ## Theming
 

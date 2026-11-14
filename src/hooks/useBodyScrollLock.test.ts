@@ -106,11 +106,14 @@ describe("useBodyScrollLock", () => {
     }
   });
 
-  it("publishes 0px when the scrollbar takes no space", () => {
+  it("leaves the variable unset when the scrollbar takes no space", () => {
+    // Writing an inherited custom property on the root restyles the whole page,
+    // so it's only written when there's a width to report.
     const { unmount } = renderHook(() => useBodyScrollLock(true));
-    expect(document.documentElement.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("0px");
+    expect(document.documentElement.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("");
     expect(document.body.style.right).toBe("0px");
     unmount();
+    expect(document.documentElement.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("");
   });
 
   it("skips compensation when the root keeps its scrollbar space while locked", () => {
@@ -119,7 +122,7 @@ describe("useBodyScrollLock", () => {
     try {
       const { unmount } = renderHook(() => useBodyScrollLock(true));
       expect(document.body.style.right).toBe("0px");
-      expect(document.documentElement.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("0px");
+      expect(document.documentElement.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("");
       expect(getScrollLockCompensation()).toBe(0);
       unmount();
     } finally {
@@ -155,10 +158,24 @@ describe("useBodyScrollLock", () => {
   });
 
   it("restores a host's own value for the scrollbar variable on unlock", () => {
+    const restore = withScrollbar(15);
+    try {
+      const root = document.documentElement;
+      root.style.setProperty(SCROLLBAR_WIDTH_VAR, "3px");
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("15px");
+      unmount();
+      expect(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("3px");
+    } finally {
+      restore();
+    }
+  });
+
+  it("leaves a host's own value alone when there's nothing to compensate", () => {
     const root = document.documentElement;
     root.style.setProperty(SCROLLBAR_WIDTH_VAR, "3px");
     const { unmount } = renderHook(() => useBodyScrollLock(true));
-    expect(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("0px");
+    expect(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("3px");
     unmount();
     expect(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("3px");
   });
@@ -175,6 +192,29 @@ describe("useBodyScrollLock", () => {
       expect(document.documentElement.style.minHeight).toBe("");
     } finally {
       delete (document.documentElement as { scrollHeight?: number }).scrollHeight;
+    }
+  });
+
+  it("holds the scroll range before any layout read of the pinned body", () => {
+    // Regression: measuring after pinning but before holding the range forced a
+    // layout of a one-viewport document, clamping the scroll offset to 0.
+    const restore = withScrollbar(15);
+    const root = document.documentElement;
+    const measure = root.getBoundingClientRect;
+    const minHeightWhenPinned: string[] = [];
+    root.getBoundingClientRect = () => {
+      if (document.body.style.position === "fixed") minHeightWhenPinned.push(root.style.minHeight);
+      return measure.call(root);
+    };
+    Object.defineProperty(root, "scrollHeight", { configurable: true, get: () => 5000 });
+    try {
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(minHeightWhenPinned.length).toBeGreaterThan(0);
+      expect(minHeightWhenPinned.every((h) => h === "5000px")).toBe(true);
+      unmount();
+    } finally {
+      delete (root as { scrollHeight?: number }).scrollHeight;
+      restore();
     }
   });
 
