@@ -3,6 +3,20 @@ import { ImageViewer, type ViewerContext, type ViewerItem } from "@jekrch/react-
 import { CodePanel } from "./CodePanel";
 import "../src/styles.css";
 import "./playground.css";
+import trees from "./images/trees.jpg";
+import treesThumb from "./images/trees-thumb.jpg";
+import plants from "./images/plants.jpg";
+import plantsThumb from "./images/plants-thumb.jpg";
+import sky from "./images/sky.jpg";
+import skyThumb from "./images/sky-thumb.jpg";
+import cat from "./images/cat.jpg";
+import catThumb from "./images/cat-thumb.jpg";
+import buildings from "./images/buildings.jpg";
+import buildingsThumb from "./images/buildings-thumb.jpg";
+import crane from "./images/crane.jpg";
+import craneThumb from "./images/crane-thumb.jpg";
+import willow from "./images/willow.jpg";
+import willowThumb from "./images/willow-thumb.jpg";
 
 // Per-slide detail payload. It lives on each item as `data`, so the
 // overlay reads `ctx.item.data` with no parallel lookup keyed by index/id.
@@ -12,15 +26,27 @@ interface SlideDetail {
   credit: string;
 }
 
-const items: ViewerItem<SlideDetail>[] = Array.from({ length: 6 }, (_, i) => ({
-  id: String(i),
-  src: `https://picsum.photos/id/${10 + i}/1600/1000`,
-  thumbnail: `https://picsum.photos/id/${10 + i}/480/300`,
-  alt: `Demo image ${i + 1}`,
+const photos = [
+  { id: "trees", src: trees, thumbnail: treesThumb, alt: "Looking up through a tree canopy" },
+  { id: "cat", src: cat, thumbnail: catThumb, alt: "A gray cat sitting by a farm fence" },
+  { id: "plants", src: plants, thumbnail: plantsThumb, alt: "Pothos plants and a lucky cat" },
+  {
+    id: "buildings",
+    src: buildings,
+    thumbnail: buildingsThumb,
+    alt: "Brick towers against a blue sky",
+  },
+  { id: "crane", src: crane, thumbnail: craneThumb, alt: "A grey crowned crane in tall grass" },
+  { id: "sky", src: sky, thumbnail: skyThumb, alt: "Willow branches against a cloudy sky" },
+  { id: "willow", src: willow, thumbnail: willowThumb, alt: "Autumn willow over a rolling field" },
+];
+
+const items: ViewerItem<SlideDetail>[] = photos.map((p) => ({
+  ...p,
   data: {
-    title: `Image ${i + 1}`,
+    title: p.alt,
     body: "Per-slide copy that travels with the item. Swipe and watch it update with the image, with no parallel details array to keep in sync.",
-    credit: `picsum.photos · id ${10 + i}`,
+    credit: `${p.id}.jpg`,
   },
 }));
 
@@ -276,8 +302,7 @@ export function App() {
       </section>
 
       <footer className="pg-footer">
-        Images from <a href="https://picsum.photos">picsum.photos</a>. Built with{" "}
-        <a href={REPO_URL}>@jekrch/react-viewport-lightbox</a>.
+        Built with <a href={REPO_URL}>@jekrch/react-viewport-lightbox</a>.
       </footer>
 
       {open && (
@@ -310,7 +335,9 @@ export function App() {
           renderHeader={(ctx) => (
             <>
               <p className="rvl-header-title">{ctx.item.alt}</p>
-              <p className="rvl-header-subtitle">picsum.photos sample</p>
+              <p className="rvl-header-subtitle">
+                {ctx.index + 1} / {ctx.total}
+              </p>
             </>
           )}
           renderNavStart={(ctx) => (

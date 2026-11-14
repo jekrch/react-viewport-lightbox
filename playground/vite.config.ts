@@ -9,7 +9,7 @@ export default defineConfig(({ command }) => ({
   plugins: [react()],
   resolve: {
     alias: {
-      "@jekrch/react-viewport-lightbox": resolve(__dirname, "../src/index.ts"),
+      "@jekrch/react-viewport-lightbox": resolve(import.meta.dirname, "../src/index.ts"),
     },
   },
   server: { port: 5180 },
