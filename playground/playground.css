@@ -354,8 +354,9 @@ body {
 
 .pg-gallery {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 0.75rem;
+  margin-bottom: 1.25rem;
 }
 .pg-thumb {
   position: relative;
@@ -366,7 +367,9 @@ body {
   overflow: hidden;
   cursor: pointer;
   background: var(--pg-bg-soft);
-  aspect-ratio: 16 / 10;
+  /* Square tiles crop the 4:3 photos (object-fit: cover), which is what the
+     zoom-from-thumbnail flight un-crops on open and re-crops on close. */
+  aspect-ratio: 1;
 }
 .pg-thumb img {
   display: block;
@@ -385,11 +388,32 @@ body {
   opacity: 0;
   transition: opacity 0.3s;
 }
-.pg-thumb:hover img {
-  transform: scale(1.06);
+.pg-thumb-label {
+  position: absolute;
+  left: 0.6rem;
+  bottom: 0.45rem;
+  z-index: 1;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #fff;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 0.25s,
+    transform 0.25s;
+  pointer-events: none;
 }
-.pg-thumb:hover::after {
-  opacity: 1;
+@media (hover: hover) {
+  .pg-thumb:hover img {
+    transform: scale(1.06);
+  }
+  .pg-thumb:hover::after,
+  .pg-thumb:hover .pg-thumb-label {
+    opacity: 1;
+  }
+  .pg-thumb:hover .pg-thumb-label {
+    transform: none;
+  }
 }
 .pg-thumb:focus-visible {
   outline: 2px solid var(--pg-accent);
@@ -407,4 +431,68 @@ body {
 }
 .pg-footer a {
   color: var(--pg-fg-muted);
+}
+
+/* Viewer extras ------------------------------------------------------------- */
+
+/* renderImageOverlay content: pinned to the image's own box, so it sits on the
+   photo's corner however the image is letterboxed. */
+.pg-image-badge {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  backdrop-filter: blur(6px);
+}
+
+/* renderOverlay drawer. Parked below the viewport; slides up while the image
+   slides up out of view via stageShift. */
+.pg-drawer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  overflow-y: auto;
+  padding: 1.5rem;
+  color: #e6e6e6;
+  /* The backdrop tint over the page color: matches the area around the image,
+     but opaque so it fully covers it. */
+  background: linear-gradient(var(--rvl-overlay-bg), var(--rvl-overlay-bg)), var(--pg-bg);
+  transform: translateY(100vh);
+  transition: transform 0.35s cubic-bezier(0.25, 0.1, 0.25, 1);
+  pointer-events: none;
+}
+.pg-drawer.is-open {
+  transform: none;
+  pointer-events: auto;
+}
+.pg-drawer-inner {
+  max-width: 640px;
+  margin: 0 auto;
+}
+.pg-drawer h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+}
+.pg-drawer p {
+  margin: 0 0 1rem;
+  color: rgba(255, 255, 255, 0.82);
+}
+.pg-drawer .pg-drawer-note {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+.pg-drawer code {
+  font-size: 0.85em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pg-drawer {
+    transition: none;
+  }
 }

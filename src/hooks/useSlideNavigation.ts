@@ -107,9 +107,15 @@ export interface SlideNavigationState {
    * gesture) finishes the slide at roughly the finger's pace, clamped to
    * feel bounds; omitted (button/keyboard nav) it uses the fixed duration.
    * Called while a commit is already in flight, it queues the flick to fire
-   * once the new index paints instead of dropping it.
+   * once the new index paints instead of dropping it. `target` slides to that
+   * index instead of the neighbor (a `goTo` jump); see {@link jumpTarget}.
    */
-  commitSlide: (direction: "prev" | "next", velocityPxMs?: number) => void;
+  commitSlide: (direction: "prev" | "next", velocityPxMs?: number, target?: number) => void;
+  /**
+   * The index a jump is sliding to, while one plays: render that item in the
+   * neighbor panel on the slide's side in place of the adjacent one.
+   */
+  jumpTarget: number | null;
   snapBack: () => void;
   resolveSlide: (gestureStartTime: number) => void;
   setSlideActive: React.Dispatch<React.SetStateAction<boolean>>;
@@ -140,6 +146,7 @@ export function useSlideNavigation(
   const [slideAnimating, setSlideAnimating] = useState(false);
   const [slideActive, setSlideActive] = useState(false);
   const [slideDistance, setSlideDistance] = useState(0);
+  const [jumpTarget, setJumpTarget] = useState<number | null>(null);
   // Mirrors `slideDistance` for the per-frame fade math: reading state there
   // would tie the fade to a re-render that deliberately never happens mid-drag.
   const slideDistanceRef = useRef(0);
@@ -238,12 +245,12 @@ export function useSlideNavigation(
   // paging feel like it stalled — remember the latest one and fire it the
   // moment the new index has painted. One slot: momentum is what matters, not
   // an exact queued count.
-  const queuedFlickRef = useRef<"prev" | "next" | null>(null);
+  const queuedFlickRef = useRef<{ direction: "prev" | "next"; target?: number } | null>(null);
 
   const commitSlide = useCallback(
-    (direction: "prev" | "next", velocityPxMs?: number) => {
+    (direction: "prev" | "next", velocityPxMs?: number, target?: number) => {
       if (commitLockRef.current || !readyRef.current) {
-        queuedFlickRef.current = direction;
+        queuedFlickRef.current = { direction, target };
         return;
       }
       commitLockRef.current = true;
@@ -263,6 +270,7 @@ export function useSlideNavigation(
       const durationMs = prefersReducedMotion() ? 0 : slideDurationMs(remaining, velocityPxMs);
       setSlideActive(true);
       setSlideAnimating(true);
+      setJumpTarget(target ?? null);
       // Fire at the START of the slide so overlays (info drawers) can animate
       // out in sync with the image — onNavigate only fires once it completes.
       onSlideStart?.(direction);
@@ -273,7 +281,7 @@ export function useSlideNavigation(
         onTransitionEndOnce(
           slideTrackRef.current,
           () => {
-            let newIndex = direction === "prev" ? currentIndex - 1 : currentIndex + 1;
+            let newIndex = target ?? (direction === "prev" ? currentIndex - 1 : currentIndex + 1);
             // Wrap the index when looping so the slide that just played lands on
             // the far end (e.g. last → first) instead of bailing out of bounds.
             if (loop) newIndex = (newIndex + items.length) % items.length;
@@ -292,20 +300,20 @@ export function useSlideNavigation(
             }
             preload.src = newItem.src;
 
-            const doNavigate = () => onNavigate(newIndex);
+            // Once only: a decode that settles after the timeout already
+            // navigated must not navigate again, or a late settle would pull
+            // the viewer back here after the user has moved on.
+            let navigated = false;
+            const doNavigate = () => {
+              if (navigated) return;
+              navigated = true;
+              clearTimeout(timeout);
+              onNavigate(newIndex);
+            };
 
             // Add a timeout so a stalled decode can't block navigation forever
             const timeout = setTimeout(doNavigate, 300);
-            preload
-              .decode()
-              .then(() => {
-                clearTimeout(timeout);
-                doNavigate();
-              })
-              .catch(() => {
-                clearTimeout(timeout);
-                doNavigate();
-              });
+            preload.decode().then(doNavigate, doNavigate);
           },
           durationMs ? durationMs + 120 : 0,
         );
@@ -357,6 +365,7 @@ export function useSlideNavigation(
     commitLockRef.current = false;
     setSlideAnimating(false);
     setSlideActive(false);
+    setJumpTarget(null);
   }, [currentIndex]);
 
   // Allow the next commit only after React has painted the new panel, then
@@ -369,8 +378,12 @@ export function useSlideNavigation(
     readyRef.current = true;
     const queued = queuedFlickRef.current;
     queuedFlickRef.current = null;
-    if (queued === "prev" && hasPrev) commitSlide("prev");
-    else if (queued === "next" && hasNext) commitSlide("next");
+    if (queued?.target != null) {
+      // A queued jump: re-aim from wherever the last slide landed.
+      if (queued.target !== currentIndex)
+        commitSlide(queued.target < currentIndex ? "prev" : "next", undefined, queued.target);
+    } else if (queued?.direction === "prev" && hasPrev) commitSlide("prev");
+    else if (queued?.direction === "next" && hasNext) commitSlide("next");
     // Keyed on the index ALONE. hasPrev/hasNext/commitSlide are read fresh from
     // the post-navigation render, but listing them would re-run this effect on
     // their identity churn (an inline `items` array re-creates commitSlide
@@ -389,6 +402,7 @@ export function useSlideNavigation(
     slideDistance,
     applySlideOffset,
     commitSlide,
+    jumpTarget,
     snapBack,
     resolveSlide,
     setSlideActive,

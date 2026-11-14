@@ -2,14 +2,23 @@ import { describe, it, expect } from "vitest";
 import { defaultHintText } from "./hint";
 
 const base = { isTouchDevice: false, multiple: true, navigation: true, zoom: true };
+const wheelZoom = { ...base, wheelZooms: true };
 
 describe("defaultHintText", () => {
   it("covers navigation, zoom and escape on desktop", () => {
-    expect(defaultHintText(base)).toBe("← → or drag to navigate · scroll to zoom · esc to close");
+    expect(defaultHintText(base)).toBe(
+      "← → or drag to navigate · double-click to zoom · esc to close",
+    );
+    expect(defaultHintText({ ...base, multiple: false })).toBe(
+      "double-click to zoom · esc to close",
+    );
   });
 
-  it("adds the double-click shortcut for a single image", () => {
-    expect(defaultHintText({ ...base, multiple: false })).toBe(
+  it('says scroll to zoom under wheel="zoom", with the double-click shortcut for one image', () => {
+    expect(defaultHintText(wheelZoom)).toBe(
+      "← → or drag to navigate · scroll to zoom · esc to close",
+    );
+    expect(defaultHintText({ ...wheelZoom, multiple: false })).toBe(
       "scroll to zoom · double-click to enlarge · esc to close",
     );
   });
@@ -24,7 +33,9 @@ describe("defaultHintText", () => {
   });
 
   it("omits navigation when it's disabled and zoom when it's off", () => {
-    expect(defaultHintText({ ...base, navigation: false })).toBe("scroll to zoom · esc to close");
+    expect(defaultHintText({ ...base, navigation: false })).toBe(
+      "double-click to zoom · esc to close",
+    );
     expect(defaultHintText({ ...base, zoom: false })).toBe(
       "← → or drag to navigate · esc to close",
     );
@@ -35,7 +46,7 @@ describe("defaultHintText", () => {
       "swipe to navigate · pinch to zoom · swipe down to close",
     );
     expect(defaultHintText({ ...base, dismiss: true })).toBe(
-      "← → or drag to navigate · scroll to zoom · esc to close",
+      "← → or drag to navigate · double-click to zoom · esc to close",
     );
   });
 

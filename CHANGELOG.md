@@ -1,7 +1,35 @@
 # Changelog
 
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
-See [docs/RELEASING.md](docs/RELEASING.md) for the format.
+
+## v1.0.0
+
+- **`wheel`** (breaking) — trackpad pinch zooms, scroll pans when zoomed; `wheel="zoom"` restores zoom-on-scroll.
+- **`ViewerItem.data`** (breaking) — required once you name `TData`; `ViewerItem<T | undefined>` keeps it optional.
+- **`ctx.setContentShift`** (breaking) — removed; use `stageShift`, which now snaps back when cleared mid-slide.
+- **`useLightbox`** — the whole lightbox in one hook: spread `triggerProps(i)` on tiles, render `viewer` once.
+- **`/lazy` entry** — `LazyImageViewer` and `preloadViewer()` keep the viewer out of your main bundle.
+- **`prefetchItem`** — fetch and decode an item's image ahead of the open.
+- **Sharp zoom** — zooming past 1.5× swaps in a bigger `srcSet` candidate, or new `item.zoomSrc`.
+- **Pan momentum** — a flicked pan coasts to a stop; `grabbing` cursor while dragging.
+- **`goTo`** — slides like a step and fires `onNavigate`, as do `Home` and `End`.
+- **`tapToToggleChrome`** — opt-in: a tap hides the bars; `ctx.chromeHidden` reports it.
+- **Load errors** — "Couldn't load image" with Retry; replace via `renderError`, style via `classNames.error`.
+- **`ctx.close(then)`** — navigate from `then`, after the viewer leaves its `history` entry.
+- **`history.paging`** — `"push"` makes back step through viewed photos.
+- **`accent`** — new prop that sets `--rvl-accent` on the viewer.
+- **`preloadCount`** — neighbors to warm each side (default `1`; `0` under Save-Data).
+- **`closeOnBackdropClick`** — the nav row's empty ends now count as backdrop; tune with `--rvl-nav-hit-slop`.
+- **`renderImageOverlay`** — fades with the bars and on each new slide; new `imageOverlay` class slot.
+- **`ViewerItem.kind`** — reserved for future slide types; leave unset.
+- **Faster open and close** — on large pages with a classic scrollbar.
+- **iOS Safari** — status-bar and toolbar colors come back after close.
+- **`history`** — back no longer skips a deep-linked open; sandboxed iframes no longer crash.
+- **Slow swipes** — a late image decode no longer pulls the viewer back a slide.
+- **CommonJS types** — `require` gets `.d.cts` declarations; `package.json` is exported.
+- **Icons** — Lucide's license notice now ships in `THIRD_PARTY_NOTICES.md`.
+- **Docs** — long how-tos moved to [`docs/guides/`](docs/guides/README.md).
+- **Bundle** — budget raised for `useLightbox`, load errors, `history.paging`, the scroll-lock speedup, trackpad wheel, pan momentum, `tapToToggleChrome`, and sharp zoom.
 
 ## v0.10.1
 

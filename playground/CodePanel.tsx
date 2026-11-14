@@ -11,7 +11,13 @@ export interface CodeOptions {
   loop: boolean;
   zoom: boolean;
   zoomToCursor: boolean;
+  wheelZooms: boolean;
   closeOnBackdropClick: boolean;
+  swipeToClose: boolean;
+  tapToToggleChrome: boolean;
+  history: boolean;
+  backSteps: boolean;
+  badge: boolean;
   hint: boolean;
   navHeight: number;
   navInset: number;
@@ -24,51 +30,63 @@ const DEFAULT_NAV_HEIGHT = 38;
 const DEFAULT_NAV_INSET = 21;
 
 function buildCode(o: CodeOptions): string {
-  const lines = [
-    `import { useState } from "react";`,
-    `import { ImageViewer } from "@jekrch/react-viewport-lightbox";`,
-    ``,
-    `function Gallery() {`,
-    `  const [open, setOpen] = useState(false);`,
-    `  const [index, setIndex] = useState(0);`,
-    ``,
-    `  return (`,
-    `    // Accent themes the viewer via a CSS custom property.`,
-    `    <div style={{ "--rvl-accent": "${o.accent}" }}>`,
-    `      {items.map((item, i) => (`,
-    `        <button key={item.id} onClick={() => { setIndex(i); setOpen(true); }}>`,
-    `          <img src={item.thumbnail} alt={item.alt} />`,
-    `        </button>`,
-    `      ))}`,
-    ``,
-    `      {open && (`,
-    `        <ImageViewer`,
-    `          items={items}`,
-    `          index={index}`,
-    `          loop={${o.loop}}`,
-    `          zoom={${o.zoom}}`,
+  const opts: string[] = [
+    `    accent: "${o.accent}",`,
+    `    loop: ${o.loop},`,
+    `    zoom: ${o.zoom},`,
   ];
 
   // zoomToCursor only applies while zoom is on — mirror the disabled control.
-  if (o.zoom) lines.push(`          zoomToCursor={${o.zoomToCursor}}`);
+  if (o.zoom) opts.push(`    zoomToCursor: ${o.zoomToCursor},`);
+  // The default wheel pans a zoomed image (trackpads pinch to zoom).
+  if (o.zoom && o.wheelZooms) opts.push(`    wheel: "zoom",`);
+  // Defaults to true; only worth writing when turned off.
+  if (!o.swipeToClose) opts.push(`    swipeToClose: false,`);
+  if (o.tapToToggleChrome) opts.push(`    tapToToggleChrome: true,`);
+  opts.push(`    closeOnBackdropClick: ${o.closeOnBackdropClick},`);
+  if (o.history) {
+    opts.push(
+      `    // Back closes the viewer; ?photo=<id> links open straight onto a photo.`,
+      o.backSteps
+        ? `    history: { param: "photo", paging: "push" },`
+        : `    history: { param: "photo" },`,
+    );
+  }
+  if (o.hint) opts.push(`    hint: true,`);
+  if (o.navHeight !== DEFAULT_NAV_HEIGHT) opts.push(`    navHeight: ${o.navHeight},`);
+  if (o.navInset !== DEFAULT_NAV_INSET) opts.push(`    navInset: ${o.navInset},`);
+  if (o.badge) {
+    opts.push(`    renderImageOverlay: (ctx) => <span className="badge">{ctx.item.alt}</span>,`);
+  }
 
-  lines.push(`          closeOnBackdropClick={${o.closeOnBackdropClick}}`);
-  if (o.hint) lines.push(`          hint`);
-
-  if (o.navHeight !== DEFAULT_NAV_HEIGHT) lines.push(`          navHeight={${o.navHeight}}`);
-  if (o.navInset !== DEFAULT_NAV_INSET) lines.push(`          navInset={${o.navInset}}`);
-
-  lines.push(
-    `          onIndexChange={setIndex}`,
-    `          onClose={() => setOpen(false)}`,
-    `        />`,
-    `      )}`,
-    `    </div>`,
+  return [
+    `import { useLightbox, type ViewerItem } from "@jekrch/react-viewport-lightbox/lazy";`,
+    ``,
+    `const items: ViewerItem[] = [`,
+    `  { id: "1", src: "/photos/1.jpg", thumbnail: "/photos/1-thumb.jpg", alt: "First" },`,
+    `  { id: "2", src: "/photos/2.jpg", thumbnail: "/photos/2-thumb.jpg", alt: "Second" },`,
+    `];`,
+    ``,
+    `function Gallery() {`,
+    `  // Loads the viewer's code when the page is idle, and each photo on`,
+    `  // hover or press. Takes any viewer prop.`,
+    `  const lightbox = useLightbox(items, {`,
+    ...opts,
+    `  });`,
+    ``,
+    `  return (`,
+    `    <>`,
+    `      {items.map((item, i) => (`,
+    `        // Opens the viewer, and the image zooms out of (and back into) it.`,
+    `        <button key={item.id} {...lightbox.triggerProps(i)}>`,
+    `          <img src={item.thumbnail} alt={item.alt} />`,
+    `        </button>`,
+    `      ))}`,
+    `      {lightbox.viewer}`,
+    `    </>`,
     `  );`,
     `}`,
-  );
-
-  return lines.join("\n");
+  ].join("\n");
 }
 
 function escapeHtml(s: string): string {
@@ -80,8 +98,8 @@ function escapeHtml(s: string): string {
 const PATTERNS: [RegExp, string][] = [
   [/^\/\/[^\n]*/, "comment"],
   [/^"(?:[^"\\]|\\.)*"|^'(?:[^'\\]|\\.)*'/, "string"],
-  [/^\b(?:import|from|const|return|function|true|false|null)\b/, "keyword"],
-  [/^ImageViewer\b/, "component"],
+  [/^\b(?:import|from|type|const|return|function|true|false|null)\b/, "keyword"],
+  [/^(?:useLightbox|ViewerItem)\b/, "component"],
   [/^[A-Za-z_]\w*(?=\s*=[^=])/, "prop"],
 ];
 

@@ -3,10 +3,14 @@ import { defineConfig } from "tsup";
 export default defineConfig({
   entry: {
     index: "src/index.ts",
+    lazy: "src/lazy.tsx",
     styles: "src/styles.css",
   },
   format: ["esm", "cjs"],
-  dts: { entry: "src/index.ts" },
+  // tsup splits ESM by default (CJS stays one file per entry): the viewer
+  // becomes a shared chunk that `index` imports statically and `lazy` imports
+  // on demand.
+  dts: { entry: { index: "src/index.ts", lazy: "src/lazy.tsx" } },
   sourcemap: true,
   clean: true,
   // Comment prose stays in src/ and the sourcemaps; the shipped JS and CSS are

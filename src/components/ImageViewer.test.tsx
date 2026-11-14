@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import { afterEach } from "vitest";
+import { useState } from "react";
 import { ImageViewer } from "./ImageViewer";
 import type { ViewerContext, ViewerItem } from "../types";
 
@@ -241,7 +242,7 @@ describe("<ImageViewer>", () => {
     expect(img.style.opacity).toBe("");
   });
 
-  it("reveals the image even if it fails to load", () => {
+  it("doesn't hold a failed image hidden behind the entry gate", () => {
     const getOrigin = vi.fn().mockReturnValue({ top: 0, left: 0, width: 10, height: 10 });
     setup(1, { getOrigin });
     const img = screen.getByAltText("Bravo");
@@ -492,25 +493,43 @@ describe("<ImageViewer> stageShift", () => {
     vi.useRealTimers();
   });
 
-  it("lets a non-null ctx.setContentShift override the prop", () => {
-    let ctxRef: ViewerContext | null = null;
-    renderViewer({
-      stageShift: "up",
-      renderOverlay: (ctx) => {
-        ctxRef = ctx;
-        return null;
-      },
-    });
-    act(() => ctxRef!.setContentShift("translateY(10px)"));
-    expect(stage().style.transform).toBe("translateY(10px)");
-    act(() => ctxRef!.setContentShift(null));
+  it("snaps back, rather than animating, when cleared as a slide starts", () => {
+    function Harness() {
+      const [drawer, setDrawer] = useState(true);
+      const [index, setIndex] = useState(0);
+      return (
+        <>
+          <ImageViewer
+            items={items}
+            index={index}
+            onIndexChange={setIndex}
+            onClose={() => {}}
+            stageShift={drawer ? "up" : null}
+            onNavigate={() => setDrawer(false)}
+          />
+          <button onClick={() => setDrawer((d) => !d)}>toggle</button>
+        </>
+      );
+    }
+    render(<Harness />);
+    // A toggle animates both ways.
+    fireEvent.click(screen.getByText("toggle"));
+    expect(stage().style.transform).toBe("translateY(0)");
+    expect(stage().style.transition).toBe("");
+    fireEvent.click(screen.getByText("toggle"));
     expect(stage().style.transform).toBe("translateY(-100vh)");
+    expect(stage().style.transition).toBe("");
+    // Navigating closes the drawer from onNavigate: the stage snaps.
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(stage().style.transform).toBe("translateY(0)");
+    expect(stage().style.transition).toBe("none");
   });
 });
 
 describe("<ImageViewer> neighbor warm", () => {
-  it("keys on neighbor sources, not on items identity", () => {
-    const warmed: string[] = [];
+  let warmed: string[] = [];
+  beforeEach(() => {
+    warmed = [];
     // A minimal Image stand-in that records each warmed src.
     vi.stubGlobal(
       "Image",
@@ -525,17 +544,56 @@ describe("<ImageViewer> neighbor warm", () => {
         }
       },
     );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const five: ViewerItem[] = ["a", "b", "c", "d", "e"].map((id) => ({
+    id,
+    src: `/${id}.jpg`,
+    alt: id,
+  }));
+
+  it("warms `preloadCount` images each side, nearest first, wrapping with loop", () => {
+    renderViewer({ items: five, index: 0, preloadCount: 2, loop: true });
+    expect(warmed).toEqual(["/e.jpg", "/b.jpg", "/d.jpg", "/c.jpg"]);
+  });
+
+  it("doesn't wrap without loop, and never warms the active image", () => {
+    renderViewer({ items: five, index: 1, preloadCount: 5 });
+    expect(warmed).toEqual(["/a.jpg", "/c.jpg", "/d.jpg", "/e.jpg"]);
+  });
+
+  it("warms nothing with preloadCount 0", () => {
+    renderViewer({ index: 1, preloadCount: 0 });
+    expect(warmed).toEqual([]);
+  });
+
+  it("backs off under Save-Data unless preloadCount is explicit", () => {
+    Object.defineProperty(navigator, "connection", {
+      value: { saveData: true },
+      configurable: true,
+    });
     try {
-      const { rerender } = renderViewer({ index: 1 });
+      const { unmount } = renderViewer({ index: 1 });
+      expect(warmed).toEqual([]);
+      unmount();
+      renderViewer({ index: 1, preloadCount: 1 });
       expect(warmed).toEqual(["/a.jpg", "/c.jpg"]);
-      // A fresh but equal array (the inline `items={photos.map(…)}` pattern).
-      rerender({ items: items.map((it) => ({ ...it })) });
-      expect(warmed).toHaveLength(2);
-      rerender({ index: 2 });
-      expect(warmed).toEqual(["/a.jpg", "/c.jpg", "/b.jpg"]);
     } finally {
-      vi.unstubAllGlobals();
+      delete (navigator as { connection?: unknown }).connection;
     }
+  });
+
+  it("keys on neighbor sources, not on items identity", () => {
+    const { rerender } = renderViewer({ index: 1 });
+    expect(warmed).toEqual(["/a.jpg", "/c.jpg"]);
+    // A fresh but equal array (the inline `items={photos.map(…)}` pattern).
+    rerender({ items: items.map((it) => ({ ...it })) });
+    expect(warmed).toHaveLength(2);
+    rerender({ index: 2 });
+    expect(warmed).toEqual(["/a.jpg", "/c.jpg", "/b.jpg"]);
   });
 });
 
@@ -589,6 +647,101 @@ describe("<ImageViewer> loading spinner", () => {
   });
 });
 
+describe("<ImageViewer> load error", () => {
+  function fail(alt: string) {
+    act(() => {
+      fireEvent.error(screen.getByAltText(alt));
+    });
+  }
+
+  it("replaces a broken image with a message and a Retry button", () => {
+    renderViewer({ index: 0 });
+    expect(screen.queryByRole("alert")).toBeNull();
+    fail("Alpha");
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load image");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByAltText("Alpha").style.visibility).toBe("hidden");
+  });
+
+  it("Retry reloads the image in a fresh element, with a spinner until it loads", () => {
+    renderViewer({ index: 0 });
+    const broken = screen.getByAltText("Alpha");
+    fail("Alpha");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    const fresh = screen.getByAltText("Alpha");
+    expect(fresh).not.toBe(broken);
+    expect(fresh.style.visibility).toBe("");
+    expect(screen.getByLabelText("Loading")).toBeInTheDocument();
+    act(() => {
+      fireEvent.load(fresh);
+    });
+    expect(screen.queryByLabelText("Loading")).toBeNull();
+  });
+
+  it("shows the error again when the retry fails too", () => {
+    renderViewer({ index: 0 });
+    fail("Alpha");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fail("Alpha");
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Loading")).toBeNull();
+  });
+
+  it("clears when the viewer pages to another item", () => {
+    const { rerender } = renderViewer({ index: 0 });
+    fail("Alpha");
+    rerender({ index: 1 });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByAltText("Bravo").style.visibility).toBe("");
+  });
+
+  it("is not shown when only the thumbnail placeholder fails", () => {
+    renderViewer({ index: 1, getOrigin: () => loadedTile("/thumb-b.jpg") });
+    fail("Bravo");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("hides the zoom controls while shown", () => {
+    renderViewer({ index: 0 });
+    expect(screen.getByLabelText("Zoom in")).toBeInTheDocument();
+    fail("Alpha");
+    expect(screen.queryByLabelText("Zoom in")).toBeNull();
+  });
+
+  it("keeps a Retry tap from closing the viewer through the backdrop", () => {
+    const { onClose } = renderViewer({ index: 0, closeOnBackdropClick: true });
+    fail("Alpha");
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    vi.useRealTimers();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("renderError replaces the default content and gets ctx and retry", () => {
+    const renderError = vi.fn((ctx: ViewerContext, retry: () => void) => (
+      <button type="button" onClick={retry}>
+        Try {ctx.item.alt} again
+      </button>
+    ));
+    renderViewer({ index: 0, renderError });
+    expect(renderError).not.toHaveBeenCalled();
+    fail("Alpha");
+    expect(screen.queryByText("Couldn't load image")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try Alpha again" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("renderError returning null shows nothing", () => {
+    renderViewer({ index: 0, renderError: () => null });
+    fail("Alpha");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
 describe("<ImageViewer> live region", () => {
   it("announces the position and alt text", () => {
     const { rerender } = renderViewer({ index: 0 });
@@ -614,8 +767,15 @@ describe("<ImageViewer> hint", () => {
 
   it("renders the built-in text with hint={true}", () => {
     renderViewer({ hint: true, classNames: { hint: "my-hint" } });
-    expect(hintEl()).toHaveTextContent("← → or drag to navigate · scroll to zoom · esc to close");
+    expect(hintEl()).toHaveTextContent(
+      "← → or drag to navigate · double-click to zoom · esc to close",
+    );
     expect(hintEl()).toHaveClass("my-hint");
+  });
+
+  it('says scroll to zoom under wheel="zoom"', () => {
+    renderViewer({ hint: true, wheel: "zoom" });
+    expect(hintEl()).toHaveTextContent("← → or drag to navigate · scroll to zoom · esc to close");
   });
 
   it("follows the zoom and disableNavigation props", () => {
@@ -691,6 +851,272 @@ describe("<ImageViewer> history", () => {
     expect(window.location.search).toBe("?x=1&photo=c");
     expect(pushes).toHaveBeenCalledTimes(1);
     pushes.mockRestore();
+  });
+
+  describe("close(then)", () => {
+    function withCtx(props: Partial<React.ComponentProps<typeof ImageViewer>> = {}) {
+      let ctx!: ViewerContext;
+      renderViewer({
+        index: 1,
+        renderHeader: (c) => {
+          ctx = c;
+          return null;
+        },
+        ...props,
+      });
+      return () => ctx;
+    }
+
+    it("runs then once the back step has landed, not before", () => {
+      const goBack = vi.spyOn(window.history, "back").mockImplementation(() => {});
+      try {
+        const ctx = withCtx({ history: { param: "photo" } });
+        const then = vi.fn();
+        act(() => ctx().close(then));
+        expect(goBack).toHaveBeenCalledTimes(1);
+        expect(then).not.toHaveBeenCalled();
+        back();
+        expect(then).toHaveBeenCalledTimes(1);
+      } finally {
+        goBack.mockRestore();
+      }
+    });
+
+    it("runs then at once without history", () => {
+      const ctx = withCtx();
+      const then = vi.fn();
+      act(() => ctx().close(then));
+      expect(then).toHaveBeenCalledTimes(1);
+    });
+
+    it("joins a close already on its way", () => {
+      const goBack = vi.spyOn(window.history, "back").mockImplementation(() => {});
+      try {
+        const ctx = withCtx({ history: true });
+        const then = vi.fn();
+        act(() => ctx().close());
+        act(() => ctx().close(then));
+        expect(goBack).toHaveBeenCalledTimes(1);
+        expect(then).not.toHaveBeenCalled();
+        back();
+        expect(then).toHaveBeenCalledTimes(1);
+      } finally {
+        goBack.mockRestore();
+      }
+    });
+
+    it("runs then anyway if the back step never reports", () => {
+      vi.useFakeTimers();
+      const goBack = vi.spyOn(window.history, "back").mockImplementation(() => {});
+      try {
+        const ctx = withCtx({ history: true });
+        const then = vi.fn();
+        act(() => ctx().close(then));
+        act(() => {
+          vi.advanceTimersByTime(1000);
+        });
+        expect(then).toHaveBeenCalledTimes(1);
+      } finally {
+        goBack.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it("runs then at once when back itself started the close", () => {
+      const ctx = withCtx({ history: true });
+      back();
+      const then = vi.fn();
+      act(() => ctx().close(then));
+      expect(then).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('with paging: "push"', () => {
+    const opts = { param: "photo", paging: "push" } as const;
+    /** Simulate the browser landing on an earlier entry: its state and URL, then popstate. */
+    const landOn = (entry: { state: unknown; url: string }) =>
+      act(() => {
+        window.history.replaceState(entry.state, "", entry.url);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+    const entry = () => ({
+      state: window.history.state,
+      url: window.location.pathname + window.location.search,
+    });
+
+    it("pushes an entry per item, and back steps to the previous item", () => {
+      const pushes = vi.spyOn(window.history, "pushState");
+      try {
+        const { rerender, onIndexChange } = renderViewer({ index: 0, history: opts });
+        const first = entry();
+        rerender({ index: 1 });
+        const second = entry();
+        rerender({ index: 2 });
+        expect(pushes).toHaveBeenCalledTimes(3);
+        expect(window.location.search).toBe("?x=1&photo=c");
+        landOn(second);
+        expect(onIndexChange).toHaveBeenLastCalledWith(1);
+        // The parent applies it; that item's entry is already current, so no push.
+        rerender({ index: 1 });
+        expect(pushes).toHaveBeenCalledTimes(3);
+        landOn(first);
+        expect(onIndexChange).toHaveBeenLastCalledWith(0);
+      } finally {
+        pushes.mockRestore();
+      }
+    });
+
+    it("closes on a back press off the opening item's entry", () => {
+      const onCloseStart = vi.fn();
+      const { rerender } = renderViewer({ index: 0, history: opts, onCloseStart });
+      rerender({ index: 1 });
+      back();
+      expect(onCloseStart).toHaveBeenCalledTimes(1);
+    });
+
+    it("steps off every viewer entry at once when closed from the UI", () => {
+      const go = vi.spyOn(window.history, "go").mockImplementation(() => {});
+      try {
+        const { rerender } = renderViewer({ index: 0, history: opts });
+        rerender({ index: 1 });
+        rerender({ index: 2 });
+        fireEvent.click(screen.getByLabelText("Close"));
+        expect(go).toHaveBeenCalledWith(-3);
+      } finally {
+        go.mockRestore();
+      }
+    });
+
+    it("lets onEscape claim a step, putting the item back on top", () => {
+      let drawerOpen = true;
+      const onEscape = vi.fn(() => {
+        if (!drawerOpen) return false;
+        drawerOpen = false;
+        return true;
+      });
+      const pushes = vi.spyOn(window.history, "pushState");
+      try {
+        const { rerender, onIndexChange } = renderViewer({ index: 0, history: opts, onEscape });
+        const first = entry();
+        rerender({ index: 1 });
+        expect(pushes).toHaveBeenCalledTimes(2);
+        landOn(first);
+        expect(onEscape).toHaveBeenCalledTimes(1);
+        expect(onIndexChange).not.toHaveBeenCalled();
+        // Item 1's entry is pushed again, so the next back still steps.
+        expect(pushes).toHaveBeenCalledTimes(3);
+        expect(window.location.search).toBe("?x=1&photo=b");
+        landOn(first);
+        expect(onIndexChange).toHaveBeenLastCalledWith(0);
+      } finally {
+        pushes.mockRestore();
+      }
+    });
+  });
+
+  describe("before the page's first user interaction", () => {
+    const activation = { hasBeenActive: false };
+    beforeEach(() => {
+      activation.hasBeenActive = false;
+      Object.defineProperty(navigator, "userActivation", {
+        value: activation,
+        configurable: true,
+      });
+    });
+    afterEach(() => {
+      delete (navigator as { userActivation?: unknown }).userActivation;
+    });
+
+    it("waits for the first interaction to push, so back doesn't skip the entry", () => {
+      window.history.replaceState(null, "", "/gallery?x=1&photo=b");
+      const pushes = vi.spyOn(window.history, "pushState");
+      try {
+        renderViewer({ index: 1, history: { param: "photo" } });
+        expect(pushes).not.toHaveBeenCalled();
+        expect(window.location.search).toBe("?x=1&photo=b");
+        // A press that isn't an activation yet (a touch activates on release).
+        fireEvent.pointerDown(window);
+        expect(pushes).not.toHaveBeenCalled();
+        activation.hasBeenActive = true;
+        fireEvent.pointerUp(window);
+        expect(pushes).toHaveBeenCalledTimes(1);
+        expect(viewerEntry()).toBe(true);
+        expect(window.location.search).toBe("?x=1&photo=b");
+        // Only once.
+        fireEvent.keyDown(window, { key: "ArrowRight" });
+        expect(pushes).toHaveBeenCalledTimes(1);
+      } finally {
+        pushes.mockRestore();
+      }
+    });
+
+    it("strips its param when closed before any interaction", () => {
+      window.history.replaceState(null, "", "/gallery?x=1&photo=b");
+      const backs = vi.spyOn(window.history, "back");
+      try {
+        renderViewer({ index: 1, history: { param: "photo" } });
+        // Escape isn't a user activation.
+        fireEvent.keyDown(document, { key: "Escape" });
+        expect(backs).not.toHaveBeenCalled();
+        expect(window.location.search).toBe("?x=1");
+      } finally {
+        backs.mockRestore();
+      }
+    });
+  });
+
+  it("falls back to a state-only entry when the URL can't be rewritten", () => {
+    // A sandboxed frame refuses URL rewrites with a SecurityError.
+    const realPush = window.history.pushState.bind(window.history);
+    const realReplace = window.history.replaceState.bind(window.history);
+    const refuseUrl =
+      (real: History["pushState"]) =>
+      (state: unknown, unused: string, url?: string | URL | null) => {
+        if (url != null) throw new DOMException("origin 'null'", "SecurityError");
+        real(state, unused);
+      };
+    const pushes = vi.spyOn(window.history, "pushState").mockImplementation(refuseUrl(realPush));
+    const replaces = vi
+      .spyOn(window.history, "replaceState")
+      .mockImplementation(refuseUrl(realReplace));
+    try {
+      const onCloseStart = vi.fn();
+      const { rerender } = renderViewer({
+        index: 1,
+        history: { param: "photo" },
+        onCloseStart,
+      });
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      // The entry exists (back still closes); the URL just isn't rewritten.
+      expect(viewerEntry()).toBe(true);
+      expect(window.location.search).toBe("?x=1");
+      rerender({ index: 2 });
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      replaces.mockRestore();
+      back();
+      expect(onCloseStart).toHaveBeenCalledTimes(1);
+    } finally {
+      pushes.mockRestore();
+      replaces.mockRestore();
+    }
+  });
+
+  it("keeps working, without history, when the browser refuses history writes", () => {
+    const pushes = vi.spyOn(window.history, "pushState").mockImplementation(() => {
+      throw new DOMException("origin 'null'", "SecurityError");
+    });
+    const backs = vi.spyOn(window.history, "back");
+    try {
+      renderViewer({ index: 1, history: { param: "photo" } });
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(viewerEntry()).toBe(false);
+      fireEvent.click(screen.getByLabelText("Close"));
+      // No entry was pushed, so closing mustn't step the page back.
+      expect(backs).not.toHaveBeenCalled();
+    } finally {
+      pushes.mockRestore();
+      backs.mockRestore();
+    }
   });
 
   it("honors a custom value, and leaves the param off for null", () => {
@@ -1004,12 +1430,35 @@ describe("<ImageViewer> keyboard zoom and pan", () => {
     expect(document.querySelector('img[src="/a.jpg"]')).toBeNull();
   });
 
-  it("jumps to the ends with Home and End", () => {
-    const { onIndexChange } = renderViewer({ index: 1 });
-    key("End");
-    expect(onIndexChange).toHaveBeenLastCalledWith(2);
-    key("Home");
-    expect(onIndexChange).toHaveBeenLastCalledWith(0);
+  it("jumps to the ends with Home and End, sliding like a step", async () => {
+    vi.useFakeTimers();
+    installDecode();
+    try {
+      const fourItems = [...items, { id: "d", src: "/d.jpg", alt: "Delta" }];
+      const onNavigate = vi.fn();
+      const { onIndexChange, rerender } = renderViewer({ items: fourItems, onNavigate });
+      key("End");
+      // The target rides in the next-side panel while the slide plays.
+      expect(onNavigate).toHaveBeenLastCalledWith("next");
+      expect(document.querySelector('.rvl-adjacent img[src="/d.jpg"]')).not.toBeNull();
+      expect(onIndexChange).not.toHaveBeenCalled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(onIndexChange).toHaveBeenLastCalledWith(3);
+
+      rerender({ items: fourItems, onNavigate, index: 3 });
+      key("Home");
+      expect(onNavigate).toHaveBeenLastCalledWith("prev");
+      expect(document.querySelector('.rvl-adjacent img[src="/a.jpg"]')).not.toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(onIndexChange).toHaveBeenLastCalledWith(0);
+    } finally {
+      uninstallDecode();
+      vi.useRealTimers();
+    }
   });
 
   it("does nothing with zoom={false}", () => {
@@ -1084,6 +1533,73 @@ describe("<ImageViewer> onOpenComplete", () => {
       vi.advanceTimersByTime(1000);
     });
     expect(onOpenComplete).not.toHaveBeenCalled();
+  });
+});
+
+describe("<ImageViewer> renderImageOverlay", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const container = () => screen.getByText("badge").parentElement!;
+  const shown = () => container().classList.contains("rvl-image-overlay-shown");
+  const renderImageOverlay = () => <span>badge</span>;
+
+  it("renders inside the image wrapper, in a slot container", () => {
+    renderViewer({ renderImageOverlay, classNames: { imageOverlay: "my-overlay" } });
+    expect(container()).toHaveClass("rvl-image-overlay", "my-overlay");
+    expect(container().parentElement).toHaveClass("rvl-img-wrapper");
+  });
+
+  it("shows once the viewer is visible and hides the moment a close starts", () => {
+    renderViewer({ renderImageOverlay });
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+    expect(shown()).toBe(true);
+    fireEvent.click(screen.getByLabelText("Close"));
+    // Still mounted (the viewer is fading out), but no longer shown.
+    expect(screen.getByText("badge")).toBeInTheDocument();
+    expect(shown()).toBe(false);
+  });
+
+  it("stays hidden while the opening image is held back to load", () => {
+    renderViewer({
+      renderImageOverlay,
+      getOrigin: () => ({ top: 0, left: 0, width: 10, height: 10 }),
+    });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(shown()).toBe(false);
+    act(() => {
+      fireEvent.load(screen.getByAltText("Alpha"));
+    });
+    expect(shown()).toBe(true);
+  });
+
+  it("fades each new image's overlay in after a slide change, not the opening one", () => {
+    const { rerender } = renderViewer({ renderImageOverlay });
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+    const opening = container();
+    expect(opening).not.toHaveClass("rvl-image-overlay-enter");
+    rerender({ index: 1 });
+    // A fresh element, so the enter animation restarts for this image.
+    expect(container()).not.toBe(opening);
+    expect(container()).toHaveClass("rvl-image-overlay-enter", "rvl-image-overlay-shown");
+    // Coming back to the opening image after paging fades in too.
+    rerender({ index: 0 });
+    expect(container()).toHaveClass("rvl-image-overlay-enter");
+  });
+
+  it("renders no container without the slot", () => {
+    renderViewer({});
+    expect(document.querySelector(".rvl-image-overlay")).toBeNull();
   });
 });
 
@@ -1242,5 +1758,157 @@ describe("<ImageViewer> scrollbar compensation", () => {
     const dialog = screen.getByRole("dialog");
     fireEvent.click(screen.getByLabelText("Close"));
     expect(dialog.style.right).toBe("");
+  });
+});
+
+describe("<ImageViewer> tapToToggleChrome", () => {
+  const root = () => screen.getByRole("dialog");
+  const wrapper = () => document.querySelector(".rvl-img-wrapper") as HTMLElement;
+  const track = () => document.querySelector(".rvl-track") as HTMLElement;
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  // Past the ghost-click window that follows an open.
+  const settle = () => act(() => void vi.advanceTimersByTime(1000));
+
+  it("is off by default", () => {
+    setup(0);
+    settle();
+    fireEvent.click(wrapper(), { detail: 1 });
+    act(() => void vi.advanceTimersByTime(400));
+    expect(root()).not.toHaveClass("rvl-chrome-hidden");
+  });
+
+  it("a click hides the bars once the double-click window passes, and another shows them", () => {
+    let seen: boolean | undefined;
+    setup(0, {
+      tapToToggleChrome: true,
+      renderFooter: (ctx) => {
+        seen = ctx.chromeHidden;
+        return null;
+      },
+    });
+    settle();
+    fireEvent.click(wrapper(), { detail: 1 });
+    expect(root()).not.toHaveClass("rvl-chrome-hidden");
+    act(() => void vi.advanceTimersByTime(300));
+    expect(root()).toHaveClass("rvl-chrome-hidden");
+    expect(seen).toBe(true);
+
+    fireEvent.click(wrapper(), { detail: 1 });
+    act(() => void vi.advanceTimersByTime(300));
+    expect(root()).not.toHaveClass("rvl-chrome-hidden");
+    expect(seen).toBe(false);
+  });
+
+  it("a double click zooms without toggling", () => {
+    setup(0, { tapToToggleChrome: true });
+    settle();
+    fireEvent.click(wrapper(), { detail: 1 });
+    fireEvent.click(wrapper(), { detail: 2 });
+    act(() => void vi.advanceTimersByTime(400));
+    expect(root()).not.toHaveClass("rvl-chrome-hidden");
+  });
+
+  it("toggles at once when zoom is off (no double tap to wait for)", () => {
+    setup(0, { tapToToggleChrome: true, zoom: false });
+    settle();
+    fireEvent.click(wrapper(), { detail: 1 });
+    expect(root()).toHaveClass("rvl-chrome-hidden");
+  });
+
+  it("a touch tap toggles, and its synthesized click doesn't toggle again", () => {
+    setup(0, { tapToToggleChrome: true });
+    settle();
+    const t = { clientX: 50, clientY: 50 };
+    fireEvent.touchStart(track(), { touches: [t] });
+    fireEvent.touchEnd(track(), { touches: [], changedTouches: [t] });
+    fireEvent.click(wrapper(), { detail: 1 });
+    act(() => void vi.advanceTimersByTime(300));
+    expect(root()).toHaveClass("rvl-chrome-hidden");
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(root()).toHaveClass("rvl-chrome-hidden");
+  });
+
+  it("a background tap still closes when closeOnBackdropClick is on", () => {
+    const { onClose } = setup(0, { tapToToggleChrome: true, closeOnBackdropClick: true });
+    settle();
+    fireEvent.click(track(), { detail: 1 });
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(onClose).toHaveBeenCalled();
+    expect(root()).not.toHaveClass("rvl-chrome-hidden");
+  });
+});
+
+describe("<ImageViewer> zoom-resolution upgrade", () => {
+  const zoomItems: ViewerItem[] = [
+    { id: "a", src: "/a.jpg", alt: "Alpha", zoomSrc: "/a-full.jpg" },
+    { id: "b", src: "/b.jpg", alt: "Bravo", zoomSrc: "/b-full.jpg" },
+  ];
+  const active = () => screen.getByAltText(/Alpha|Bravo/) as HTMLImageElement;
+  const press = (key: string) => fireEvent.keyDown(window, { key });
+  beforeEach(() => {
+    installDecode();
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    uninstallDecode();
+    vi.useRealTimers();
+  });
+
+  it("swaps in zoomSrc once a zoom past 1.5x settles and it has decoded", async () => {
+    renderViewer({ items: zoomItems });
+    press("+"); // 1.3x: not yet
+    act(() => void vi.advanceTimersByTime(400));
+    expect(pendingDecodes.some((p) => p.src.endsWith("/a-full.jpg"))).toBe(false);
+
+    press("+"); // 1.69x
+    act(() => void vi.advanceTimersByTime(400));
+    expect(active().getAttribute("src")).toBe("/a.jpg");
+    await settleDecodes("/a-full.jpg");
+    expect(active().src).toMatch(/\/a-full\.jpg$/);
+    expect(active()).not.toHaveAttribute("srcset");
+  });
+
+  it("doesn't fetch again on a further zoom, and keeps the sharp source zoomed out", async () => {
+    renderViewer({ items: zoomItems });
+    press("+");
+    press("+");
+    act(() => void vi.advanceTimersByTime(400));
+    await settleDecodes("/a-full.jpg");
+    press("+");
+    act(() => void vi.advanceTimersByTime(400));
+    expect(pendingDecodes.some((p) => p.src.endsWith("/a-full.jpg"))).toBe(false);
+    press("0");
+    expect(active().src).toMatch(/\/a-full\.jpg$/);
+  });
+
+  it("drops the upgrade on navigation", async () => {
+    const { rerender } = renderViewer({ items: zoomItems });
+    press("+");
+    press("+");
+    act(() => void vi.advanceTimersByTime(400));
+    await settleDecodes("/a-full.jpg");
+    rerender({ items: zoomItems, index: 1 });
+    expect(active().getAttribute("src")).toBe("/b.jpg");
+  });
+
+  it("falls back to the original if the sharp source then fails", async () => {
+    renderViewer({ items: zoomItems });
+    press("+");
+    press("+");
+    act(() => void vi.advanceTimersByTime(400));
+    await settleDecodes("/a-full.jpg");
+    fireEvent.error(active());
+    expect(active().getAttribute("src")).toBe("/a.jpg");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("does nothing for an item with neither zoomSrc nor srcSet", () => {
+    renderViewer({});
+    press("+");
+    press("+");
+    act(() => void vi.advanceTimersByTime(400));
+    // Only the neighbor warm (/b.jpg) decodes; nothing probes for /a.jpg.
+    expect(pendingDecodes.map((p) => p.src)).toEqual([expect.stringMatching(/\/b\.jpg$/)]);
   });
 });

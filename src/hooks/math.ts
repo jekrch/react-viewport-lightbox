@@ -342,3 +342,29 @@ export function cropFadeProgress(u: number, direction: "expand" | "collapse"): n
   const span = (clamped - EXPAND_FADE_FROM) / (EXPAND_FADE_TO - EXPAND_FADE_FROM);
   return 1 - Math.min(1, Math.max(0, span));
 }
+
+/** The layout viewport's current size. */
+export function viewportSize(): Dims {
+  return { width: window.innerWidth, height: window.innerHeight };
+}
+
+/** A pointer position at a moment (`t` in ms, e.g. `performance.now()`). */
+export interface PointerSample {
+  t: number;
+  x: number;
+  y: number;
+}
+
+/**
+ * A drag's release velocity in px/ms, from its recent samples: the average
+ * over the last 100 ms. Zero when the pointer rested for 50 ms before release
+ * (a deliberate stop shouldn't coast) or there's too little to go on.
+ */
+export function releaseVelocity(samples: PointerSample[], now: number): { x: number; y: number } {
+  const recent = samples.filter((s) => now - s.t <= 100);
+  const first = recent[0];
+  const last = recent[recent.length - 1];
+  if (!first || !last || first === last || now - last.t > 50) return { x: 0, y: 0 };
+  const dt = last.t - first.t || 1;
+  return { x: (last.x - first.x) / dt, y: (last.y - first.y) / dt };
+}

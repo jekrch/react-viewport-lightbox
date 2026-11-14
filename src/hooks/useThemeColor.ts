@@ -56,6 +56,9 @@ let rootBgApplied = false;
 let previousRootBg = "";
 let previousBodyBg = "";
 
+/** How long after close the page gets to reach Safari's compositor before the resample. */
+const CLOSE_RESAMPLE_MS = 100;
+
 /**
  * iOS Safari samples the page for its chrome tint on scroll events and holds
  * the result until the next one. The locked page never scrolls on its own (the
@@ -72,7 +75,7 @@ let previousBodyBg = "";
  * needs somewhere to go. iOS-only: elsewhere it's dead weight, and a synthetic
  * window scroll could confuse host scroll listeners.
  */
-function nudgeSafariResample(): void {
+function nudgeSafariResample(scrollBack: () => boolean): void {
   const isIOS =
     /iP(hone|ad|od)/.test(navigator.platform ?? "") ||
     (navigator.userAgent.includes("Mac") && navigator.maxTouchPoints > 1);
@@ -86,10 +89,11 @@ function nudgeSafariResample(): void {
   if (lend) root.style.minHeight = lent;
   window.scrollTo(0, heldY >= 1 ? heldY - 1 : heldY + 1);
   // Not canceled on cleanup: the callback must run to restore minHeight, and
-  // the scroll-back is guarded so a close in this frame gap (after which the
-  // scroll lock has restored the page's real offset) isn't yanked back.
+  // the scroll-back is guarded so a change of state in this frame gap (a close,
+  // after which the scroll lock has restored the page's real offset) isn't
+  // yanked back.
   requestAnimationFrame(() => {
-    if (activeCount > 0) window.scrollTo(0, heldY);
+    if (scrollBack()) window.scrollTo(0, heldY);
     // Only if still ours: a close in the gap has already put the root back.
     if (lend && root.style.minHeight === lent) root.style.minHeight = previousMinHeight;
   });
@@ -147,7 +151,7 @@ export function useThemeColor(isActive: boolean, closing = false): void {
         document.documentElement.style.backgroundColor = color;
         document.body.style.backgroundColor = color;
         rootBgApplied = true;
-        nudgeSafariResample();
+        nudgeSafariResample(() => activeCount > 0);
       }, fadeMs + 50);
     }
     activeCount += 1;
@@ -167,6 +171,17 @@ export function useThemeColor(isActive: boolean, closing = false): void {
           }
           metaEl = null;
         }
+        // The same freeze on the way out: the page is unpinned and its colors
+        // are back, but Safari keeps the dark sample from the open until
+        // something scrolls, so its bars stay black over the page. Nudge again
+        // once the unlocked page has reached the compositor. Skipped when the
+        // user has scrolled meanwhile (that resamples on its own) or another
+        // overlay has opened (it nudges for itself).
+        const closedAtY = window.scrollY;
+        setTimeout(() => {
+          if (activeCount === 0 && Math.abs(window.scrollY - closedAtY) < 1)
+            nudgeSafariResample(() => activeCount === 0);
+        }, CLOSE_RESAMPLE_MS);
       }
     };
   }, [isActive]);

@@ -1,10 +1,23 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { clampTranslate as clampTranslatePure, computeZoomTransform } from "./math";
+import { clampTranslate as clampTranslatePure, computeZoomTransform, viewportSize } from "./math";
+import { prefersReducedMotion } from "./useSharedElementZoom";
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 5;
 /** Target scale for a desktop double-click zoom (a modest step-in). */
 const DOUBLE_CLICK_ZOOM_SCALE = 1.8;
+/** Pan momentum: decay time constant (ms) and the speeds (px/ms) it runs between. */
+const MOMENTUM_TAU = 325;
+const MOMENTUM_MIN = 0.05;
+const MOMENTUM_MAX = 4;
+
+/**
+ * What a wheel does: `"pan"` (default) zooms on a trackpad pinch or
+ * Ctrl+wheel and pans a zoomed image on a plain wheel or two-finger scroll,
+ * leaving an unzoomed image's wheel to the browser (so trackpad swipe-back
+ * works). `"zoom"` zooms on every wheel event.
+ */
+export type WheelMode = "pan" | "zoom";
 
 export interface ImageTransform {
   scale: number;
@@ -55,6 +68,16 @@ export interface ImageZoomPanState {
   clampTranslate: (x: number, y: number, scale: number) => { x: number; y: number };
   measureBaseDims: () => void;
   handleDoubleClick: (e: React.MouseEvent) => void;
+  /**
+   * Glide a released pan at `vx`/`vy` px/ms, decaying to rest and stopping at
+   * the image's edges. Any transform write, wheel, or navigation cancels it.
+   * Skipped under reduced motion.
+   */
+  startMomentum: (vx: number, vy: number) => void;
+  /** Stop a glide; returns whether one was running. */
+  stopMomentum: () => boolean;
+  /** Show the `grabbing` cursor on a zoomed image while a mouse drag pans it. */
+  setGrabbing: (grabbing: boolean) => void;
 }
 
 /**
@@ -79,12 +102,23 @@ export function useImageZoomPan(
    * about the viewport center.
    */
   zoomToCursor = true,
+  /** See {@link WheelMode}. Default `"pan"`. */
+  wheel: WheelMode = "pan",
 ): ImageZoomPanState {
   const imgRef = useRef<HTMLImageElement>(null);
   const [displayScale, setDisplayScale] = useState(1);
   const transformRef = useRef<ImageTransform>({ scale: 1, x: 0, y: 0 });
   const baseDimsRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
   const willChangeIdleTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const momentumRef = useRef(0);
+  const grabbingRef = useRef(false);
+
+  const stopMomentum = useCallback(() => {
+    const running = momentumRef.current !== 0;
+    cancelAnimationFrame(momentumRef.current);
+    momentumRef.current = 0;
+    return running;
+  }, []);
 
   // Core helpers
 
@@ -105,7 +139,7 @@ export function useImageZoomPan(
         // Letterbox fill behind the zoomed image: the theme's opaque backdrop
         // color, falling back to black in a headless shell without styles.css.
         wrapper.style.backgroundColor = "var(--rvl-theme-color, #000)";
-        wrapper.style.cursor = "grab";
+        wrapper.style.cursor = grabbingRef.current ? "grabbing" : "grab";
         // Promote only while zoomed/panning; the wrapper is the element the
         // zoom transform lives on, so this is where the hint belongs.
         wrapper.style.willChange = "transform";
@@ -135,11 +169,12 @@ export function useImageZoomPan(
 
   const setTransform = useCallback(
     (t: ImageTransform, animate: boolean | string = false) => {
+      stopMomentum();
       transformRef.current = t;
       applyTransform(t, animate);
       setDisplayScale(t.scale);
     },
-    [applyTransform],
+    [applyTransform, stopMomentum],
   );
 
   const syncDisplayScale = useCallback(() => {
@@ -167,28 +202,74 @@ export function useImageZoomPan(
    */
   const clampTranslate = useCallback(
     (x: number, y: number, scale: number): { x: number; y: number } =>
-      clampTranslatePure(x, y, scale, baseDimsRef.current, {
-        width: window.innerWidth,
-        height: window.innerHeight,
-      }),
+      clampTranslatePure(x, y, scale, baseDimsRef.current, viewportSize()),
     [],
   );
 
-  // Don't let a pending will-change release outlive the viewer.
+  const startMomentum = useCallback(
+    (vx: number, vy: number) => {
+      stopMomentum();
+      const speed = Math.hypot(vx, vy);
+      if (speed < MOMENTUM_MIN || prefersReducedMotion()) return;
+      // Cap a wild flick so it can't throw the image edge to edge in a blink.
+      const cap = Math.min(1, MOMENTUM_MAX / speed);
+      vx *= cap;
+      vy *= cap;
+      let last = performance.now();
+      const step = (now: number) => {
+        const dt = Math.min(now - last, 32);
+        last = now;
+        const t = transformRef.current;
+        if (t.scale <= 1) return void stopMomentum();
+        const wantX = t.x + vx * dt;
+        const wantY = t.y + vy * dt;
+        const c = clampTranslate(wantX, wantY, t.scale);
+        // An axis that hit the image's edge stops there; the other glides on.
+        if (c.x !== wantX) vx = 0;
+        if (c.y !== wantY) vy = 0;
+        const decay = Math.exp(-dt / MOMENTUM_TAU);
+        vx *= decay;
+        vy *= decay;
+        const next = { scale: t.scale, ...c };
+        transformRef.current = next;
+        applyTransform(next);
+        momentumRef.current =
+          Math.hypot(vx, vy) < MOMENTUM_MIN / 2 ? 0 : requestAnimationFrame(step);
+      };
+      momentumRef.current = requestAnimationFrame(step);
+    },
+    [applyTransform, clampTranslate, stopMomentum],
+  );
+
+  const setGrabbing = useCallback(
+    (grabbing: boolean) => {
+      grabbingRef.current = grabbing;
+      const wrapper = imgWrapperRef.current;
+      if (wrapper && transformRef.current.scale > 1)
+        wrapper.style.cursor = grabbing ? "grabbing" : "grab";
+    },
+    [imgWrapperRef],
+  );
+
+  // Don't let a pending will-change release or a glide outlive the viewer.
   useEffect(() => {
-    return () => clearTimeout(willChangeIdleTimerRef.current);
-  }, []);
+    return () => {
+      clearTimeout(willChangeIdleTimerRef.current);
+      stopMomentum();
+    };
+  }, [stopMomentum]);
 
   // Reset on navigation
 
   useLayoutEffect(() => {
+    stopMomentum();
     const wrapper = imgWrapperRef.current;
     if (wrapper) {
       wrapper.style.transition = "none";
       resetWrapperStyles(wrapper);
     }
     transformRef.current = { scale: 1, x: 0, y: 0 };
-  }, [currentIndex, imgWrapperRef]);
+  }, [currentIndex, imgWrapperRef, stopMomentum]);
 
   useEffect(() => {
     setDisplayScale(1);
@@ -201,40 +282,93 @@ export function useImageZoomPan(
     const wrapper = imgWrapperRef.current;
     if (!wrapper) return;
 
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
+    let syncTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleSync = () => {
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => setDisplayScale(transformRef.current.scale), 120);
+    };
 
+    // Lines and pages to px, so a mouse and a trackpad move the same distance.
+    const px = (d: number, mode: number) => (mode === 1 ? d * 16 : mode === 2 ? d * 100 : d);
+
+    const zoomBy = (factor: number, e: WheelEvent, animate?: string) => {
       ensureBaseDims();
-
       const t = transformRef.current;
-
-      let dy = e.deltaY;
-      if (e.deltaMode === 1) dy *= 16;
-      if (e.deltaMode === 2) dy *= 100;
-
-      const normalized = Math.max(-100, Math.min(100, dy));
-      const step = -(normalized / 100) * 0.05;
-      const factor = 1 + step;
-
       const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, t.scale * factor));
       const clamped = computeZoomTransform({
         prevScale: t.scale,
         nextScale,
         prev: { x: t.x, y: t.y },
         focal: { x: e.clientX, y: e.clientY },
-        viewport: { width: window.innerWidth, height: window.innerHeight },
+        viewport: viewportSize(),
         baseDims: baseDimsRef.current,
         zoomToCursor,
       });
-      // A short transition lets each discrete wheel tick glide into the next
-      // instead of snapping, which smooths out the stepped look of scroll-zoom.
-      // Rapid ticks restart the transition, producing continuous motion.
-      setTransform({ scale: nextScale, ...clamped }, "transform 0.1s ease-out");
+      const next = { scale: nextScale, ...clamped };
+      if (animate) {
+        setTransform(next, animate);
+        return;
+      }
+      // A trackpad pinch or pan streams events every frame: write the style
+      // directly and sync the readout once the stream goes quiet.
+      transformRef.current = next;
+      applyTransform(next);
+      scheduleSync();
+    };
+
+    const handleWheel = (e: WheelEvent) => {
+      stopMomentum();
+      const dy = px(e.deltaY, e.deltaMode);
+
+      if (wheel === "zoom") {
+        // Every wheel event zooms (the pre-1.0 behavior).
+        e.preventDefault();
+        const step = -(Math.max(-100, Math.min(100, dy)) / 100) * 0.05;
+        // A short transition lets each discrete wheel tick glide into the
+        // next instead of snapping; rapid ticks restart it.
+        zoomBy(1 + step, e, "transform 0.1s ease-out");
+        return;
+      }
+
+      // `ctrlKey` is set on a trackpad pinch (browsers report it as a
+      // Ctrl+wheel) and on a real Ctrl+wheel: both zoom. Clamped so one mouse
+      // notch is a step, not a jump; a pinch's small deltas track the fingers.
+      if (e.ctrlKey) {
+        e.preventDefault();
+        zoomBy(Math.exp(-Math.max(-25, Math.min(25, dy)) * 0.01), e);
+        return;
+      }
+
+      // A plain wheel or two-finger scroll pans a zoomed image. Unzoomed, it
+      // is left alone, so the browser's trackpad swipe-back still works.
+      const t = transformRef.current;
+      if (t.scale <= 1) return;
+      e.preventDefault();
+      // Shift turns a mouse wheel's vertical delta into a horizontal pan.
+      let dx = px(e.deltaX, e.deltaMode);
+      let vy = dy;
+      if (e.shiftKey && dx === 0) [dx, vy] = [vy, 0];
+      const next = { scale: t.scale, ...clampTranslate(t.x - dx, t.y - vy, t.scale) };
+      transformRef.current = next;
+      applyTransform(next);
     };
 
     wrapper.addEventListener("wheel", handleWheel, { passive: false });
-    return () => wrapper.removeEventListener("wheel", handleWheel);
-  }, [imgWrapperRef, setTransform, enabled, zoomToCursor, ensureBaseDims]);
+    return () => {
+      wrapper.removeEventListener("wheel", handleWheel);
+      clearTimeout(syncTimer);
+    };
+  }, [
+    imgWrapperRef,
+    setTransform,
+    applyTransform,
+    clampTranslate,
+    enabled,
+    zoomToCursor,
+    ensureBaseDims,
+    stopMomentum,
+    wheel,
+  ]);
 
   // Double-click toggle
 
@@ -256,7 +390,7 @@ export function useImageZoomPan(
           nextScale: DOUBLE_CLICK_ZOOM_SCALE,
           prev: { x: 0, y: 0 },
           focal: { x: e.clientX, y: e.clientY },
-          viewport: { width: window.innerWidth, height: window.innerHeight },
+          viewport: viewportSize(),
           baseDims: baseDimsRef.current,
           zoomToCursor,
         });
@@ -279,6 +413,9 @@ export function useImageZoomPan(
     clampTranslate,
     measureBaseDims,
     handleDoubleClick,
+    startMomentum,
+    stopMomentum,
+    setGrabbing,
   };
 }
 

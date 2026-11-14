@@ -133,6 +133,63 @@ describe("useSlideNavigation", () => {
       raf.mockRestore();
     });
 
+    it("navigates once when the decode settles after the timeout", async () => {
+      const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+      let settle!: () => void;
+      vi.stubGlobal(
+        "Image",
+        class {
+          src = "";
+          decode() {
+            return new Promise<void>((resolve) => (settle = resolve));
+          }
+        },
+      );
+      const { result, onNavigate } = setup();
+      act(() => result.current.commitSlide("next"));
+      // A stalled decode: the timeout hands off anyway.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+      });
+      expect(onNavigate).toHaveBeenCalledTimes(1);
+      // The decode finally lands; it must not navigate a second time.
+      await act(async () => {
+        settle();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(onNavigate).toHaveBeenCalledTimes(1);
+      raf.mockRestore();
+    });
+
+    it("slides to a jump target, exposing it while the slide plays", async () => {
+      const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+      vi.stubGlobal(
+        "Image",
+        class {
+          src = "";
+          decode() {
+            return Promise.resolve();
+          }
+        },
+      );
+      const onSlideStart = vi.fn();
+      const { result, onNavigate } = setup(0, onSlideStart);
+      act(() => result.current.commitSlide("next", undefined, 2));
+      expect(onSlideStart).toHaveBeenCalledWith("next");
+      expect(result.current.jumpTarget).toBe(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(onNavigate).toHaveBeenCalledWith(2);
+      raf.mockRestore();
+    });
+
     it("snaps back instantly", () => {
       const { result } = setup();
       act(() => result.current.applySlideOffset(80));

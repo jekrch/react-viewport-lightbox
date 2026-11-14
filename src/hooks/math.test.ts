@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  releaseVelocity,
   clampTranslate,
   computeZoomTransform,
   coverRect,
@@ -359,5 +360,38 @@ describe("cropFadeProgress", () => {
         prev = v;
       }
     }
+  });
+});
+
+describe("releaseVelocity", () => {
+  it("averages the last 100 ms of samples", () => {
+    const v = releaseVelocity(
+      [
+        { t: 0, x: 0, y: 0 },
+        { t: 900, x: 100, y: 0 },
+        { t: 950, x: 150, y: 10 },
+        { t: 1000, x: 200, y: 20 },
+      ],
+      1000,
+    );
+    expect(v.x).toBeCloseTo(1);
+    expect(v.y).toBeCloseTo(0.2);
+  });
+
+  it("is zero when the pointer rested before release", () => {
+    expect(
+      releaseVelocity(
+        [
+          { t: 0, x: 0, y: 0 },
+          { t: 40, x: 50, y: 0 },
+        ],
+        120,
+      ),
+    ).toEqual({ x: 0, y: 0 });
+  });
+
+  it("is zero with fewer than two recent samples", () => {
+    expect(releaseVelocity([], 0)).toEqual({ x: 0, y: 0 });
+    expect(releaseVelocity([{ t: 0, x: 5, y: 5 }], 0)).toEqual({ x: 0, y: 0 });
   });
 });

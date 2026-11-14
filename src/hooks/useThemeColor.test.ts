@@ -147,3 +147,74 @@ describe("useThemeColor", () => {
     unmount();
   });
 });
+
+describe("useThemeColor Safari resample on close", () => {
+  /** Pretend to be iOS Safari, with a spied scrollTo and manually run frames. */
+  function asIOS() {
+    const platform = Object.getOwnPropertyDescriptor(navigator, "platform");
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "iPhone" });
+    const scrollTo = vi.fn();
+    const originalScrollTo = window.scrollTo;
+    window.scrollTo = scrollTo as unknown as typeof window.scrollTo;
+    const frames: FrameRequestCallback[] = [];
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb) => frames.push(cb));
+    return {
+      scrollTo,
+      flushFrames: () => frames.splice(0).forEach((cb) => cb(0)),
+      restore: () => {
+        if (platform) Object.defineProperty(navigator, "platform", platform);
+        else delete (navigator as { platform?: string }).platform;
+        window.scrollTo = originalScrollTo;
+        raf.mockRestore();
+      },
+    };
+  }
+
+  it("nudges the scroll once the page is back, so the bars resample", () => {
+    vi.useFakeTimers();
+    const ios = asIOS();
+    try {
+      const { unmount } = renderHook(() => useThemeColor(true));
+      unmount();
+      expect(ios.scrollTo).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(100);
+      expect(ios.scrollTo).toHaveBeenCalledTimes(1);
+      ios.flushFrames();
+      // Off a pixel, then back.
+      expect(ios.scrollTo).toHaveBeenCalledTimes(2);
+      expect(ios.scrollTo).toHaveBeenLastCalledWith(0, window.scrollY);
+    } finally {
+      ios.restore();
+    }
+  });
+
+  it("skips it when another overlay opened meanwhile", () => {
+    vi.useFakeTimers();
+    const ios = asIOS();
+    try {
+      renderHook(() => useThemeColor(true)).unmount();
+      const next = renderHook(() => useThemeColor(true));
+      vi.advanceTimersByTime(100);
+      expect(ios.scrollTo).not.toHaveBeenCalled();
+      next.unmount();
+    } finally {
+      ios.restore();
+    }
+  });
+
+  it("does nothing off iOS", () => {
+    vi.useFakeTimers();
+    const scrollTo = vi.fn();
+    const original = window.scrollTo;
+    window.scrollTo = scrollTo as unknown as typeof window.scrollTo;
+    try {
+      renderHook(() => useThemeColor(true)).unmount();
+      vi.advanceTimersByTime(1000);
+      expect(scrollTo).not.toHaveBeenCalled();
+    } finally {
+      window.scrollTo = original;
+    }
+  });
+});

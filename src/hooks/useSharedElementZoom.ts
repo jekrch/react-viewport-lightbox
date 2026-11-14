@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useEffect, useRef, useState, type RefObject } from "react";
 import type { ViewerItem, ViewerRect } from "../types";
+import { prefetchItem } from "../prefetch";
 import {
   coverRect,
   cropFadeProgress,
@@ -268,8 +269,12 @@ export interface SharedElementZoomState {
   collapsing: boolean;
   /** `<img onLoad>` handler: measures base dims and marks the image ready once decoded. */
   onImageLoad: () => void;
-  /** `<img onError>` handler: reveal a broken image so the open isn't stranded. */
-  onImageError: () => void;
+  /**
+   * `<img onError>` handler: settles the open so it isn't stranded on a broken
+   * image. Returns false when only the placeholder failed (the full image then
+   * loads in its place), true when the image itself did.
+   */
+  onImageError: () => boolean;
   /** Settle an in-flight entry zoom to its resting pose (call before measuring a close). */
   settleEntry: () => void;
   /**
@@ -347,6 +352,8 @@ export function useSharedElementZoom({
   const releaseAfterEntryRef = useRef(false);
 
   const entryStartedRef = useRef(false);
+  // The opening image failed: there is nothing to fly in from the thumbnail.
+  const failedRef = useRef(false);
   const [entrySettled, setEntrySettled] = useState(false);
   // Tears down the in-flight entry zoom (clears the inline transform, restores
   // the wrapper clip, cancels the animation). Set while the zoom is playing so
@@ -418,7 +425,7 @@ export function useSharedElementZoom({
   // so the picture is paint-ready and the zoom can't flash a full-size frame.
   const runZoomEntry = useCallback(() => {
     if (entryStartedRef.current) return;
-    if (!getOrigin || prefersReducedMotion() || !item) {
+    if (!getOrigin || prefersReducedMotion() || !item || failedRef.current) {
       setEntrySettled(true);
       return;
     }
@@ -549,42 +556,31 @@ export function useSharedElementZoom({
     }
   }, [measureBaseDims, imgRef, sizeToPlaceholder, releaseSize]);
 
-  // Don't strand the open on a broken image: reveal it (skipping the zoom) so
-  // the spinner clears and the viewer stays usable. A placeholder that fails is
-  // just dropped, and the full image loads in its place.
+  // Don't strand the open on a broken image: settle it (skipping the zoom) so
+  // the spinner clears and the viewer can show its error state. A placeholder
+  // that fails is just dropped, and the full image loads in its place.
   const onImageError = useCallback(() => {
     if (placeholderRef.current) {
       setPlaceholderState(null);
-      return;
+      return false;
     }
+    if (!fullLoaded) failedRef.current = true;
     setFullLoaded(true);
-  }, []);
+    return true;
+  }, [fullLoaded]);
 
   // Fetch + decode the full opening image off-DOM while the placeholder shows.
-  // Mirrors srcset/sizes so the browser picks the same candidate the <img> will.
+  // prefetchItem mirrors srcset/sizes so the browser picks the same candidate
+  // the <img> will, and shares a request a tile hover may already have started.
   // Mount-only: the placeholder belongs to the opening item.
   useEffect(() => {
     if (!placeholderState || !item) return;
-    const full = new Image();
-    if (item.srcSet) {
-      full.srcset = item.srcSet;
-      if (item.sizes) full.sizes = item.sizes;
-    }
-    full.src = item.src;
     let cancelled = false;
-    const done = () => {
+    prefetchItem(item).then(() => {
       if (!cancelled) setFullReady(true);
-    };
-    if (typeof full.decode === "function") {
-      full.decode().then(done, done);
-    } else {
-      full.onload = done;
-      full.onerror = done;
-    }
+    });
     return () => {
       cancelled = true;
-      full.onload = null;
-      full.onerror = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

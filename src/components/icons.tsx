@@ -4,6 +4,9 @@ import type { ViewerIcons } from "../types";
 // Inline default icons so the package has no runtime icon dependency (e.g.
 // lucide-react). Each is a 24x24 stroked glyph that inherits `currentColor`.
 // Consumers can override any of them via the `icons` prop.
+//
+// Path data from Lucide (https://lucide.dev), ISC License; the notice is in
+// THIRD_PARTY_NOTICES.md, which ships with the package.
 
 function base(props: SVGProps<SVGSVGElement>) {
   return {

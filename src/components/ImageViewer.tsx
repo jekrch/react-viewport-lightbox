@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { ImageViewerProps, ViewerContext, ViewerItem, ViewerRect } from "../types";
 import { useImageZoomPan, MIN_SCALE, MAX_SCALE } from "../hooks/useImageZoomPan";
 import { useSlideNavigation } from "../hooks/useSlideNavigation";
@@ -22,6 +30,7 @@ import { NavButton } from "./NavButton";
 import { ViewerButton } from "./ViewerButton";
 import { cx } from "./cx";
 import { defaultHintText } from "./hint";
+import { prefetchItem, prefersSaveData } from "../prefetch";
 
 // Window after open during which synthesized mouse click/dblclick are ignored.
 // A tap (or double-tap) that opens the viewer fires iOS's synthesized `click` /
@@ -29,6 +38,9 @@ import { defaultHintText } from "./hint";
 // under the finger, so they re-target onto it (the dblclick zooms the image,
 // the click hits the backdrop and closes it). See GHOST guards below.
 const GHOST_CLICK_MS = 700;
+
+/** How long a tap waits for a second one before it counts as a single tap. */
+const DOUBLE_TAP_MS = 300;
 
 /** Named `stageShift` values: a full viewport out of view, up or down. */
 const STAGE_SHIFTS: Record<string, string> = {
@@ -51,6 +63,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
     type,
   );
 }
+
+const stopPropagation = (e: { stopPropagation: () => void }) => e.stopPropagation();
+
+/** Zoom past which the image is swapped for a sharper source (zoomSrc / srcSet). */
+const ZOOM_UPGRADE_AT = 1.5;
 
 /** Fraction of the smaller viewport side one arrow key pans a zoomed image. */
 const KEY_PAN_STEP = 0.1;
@@ -75,6 +92,14 @@ function useStableCallback<A extends unknown[], R>(fn: (...args: A) => R): (...a
   return useCallback((...args: A) => ref.current(...args), []);
 }
 
+/** A render slot's output, re-run only when the slot function or ctx changes. */
+function useSlot<TData>(
+  render: ((ctx: ViewerContext<TData>) => ReactNode) | undefined,
+  ctx: ViewerContext<TData>,
+): ReactNode {
+  return useMemo(() => render?.(ctx), [render, ctx]);
+}
+
 /**
  * Batteries-included fullscreen image viewer: zoom, pan, pinch, and swipe
  * navigation with themeable chrome and render slots. Controlled via `index` /
@@ -96,12 +121,15 @@ export function ImageViewer<TData = unknown>({
   thumbnailCrop = true,
   zoom = true,
   zoomToCursor = true,
+  wheel = "pan",
+  tapToToggleChrome = false,
   showCounter = true,
   showZoomControls = true,
   disableNavigation = false,
   loop = false,
   closeOnBackdropClick = false,
   swipeToClose = true,
+  preloadCount,
   renderHeader,
   renderHeaderActions,
   renderHeaderMeta,
@@ -115,6 +143,8 @@ export function ImageViewer<TData = unknown>({
   hint = false,
   renderOverlay,
   renderImageOverlay,
+  renderError,
+  accent,
   classNames,
   icons,
   ariaLabel,
@@ -122,10 +152,6 @@ export function ImageViewer<TData = unknown>({
   const [visible, setVisible] = useState(false);
   const [closing, setClosing] = useState(false);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
-  const [contentShift, setContentShiftState] = useState<{
-    transform: string | null;
-    animate: boolean;
-  }>({ transform: null, animate: true });
 
   // Timestamp of this open, used to drop the iOS ghost click/dblclick that the
   // opening tap synthesizes onto the freshly mounted viewer (see GHOST_CLICK_MS).
@@ -142,6 +168,19 @@ export function ImageViewer<TData = unknown>({
   const bottomBarRef = useRef<HTMLDivElement>(null);
 
   const item = items[index];
+
+  // The active item's src when it failed to load (shows the error state); the
+  // src a retry is reloading (shows the spinner); and a key bumped by retry to
+  // remount the <img>, so the browser fetches again.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const [retryingSrc, setRetryingSrc] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
+  // A failure belongs to its item: navigating away clears it, and coming back
+  // tries again (browsers don't cache a failed image).
+  if (failedSrc !== null && failedSrc !== item?.src) setFailedSrc(null);
+  const loadFailed = failedSrc !== null;
+  // Nothing to zoom while the image is broken.
+  const canZoom = zoom && !loadFailed;
 
   const hasPrevLinear = index > 0;
   const hasNextLinear = index < items.length - 1;
@@ -209,7 +248,7 @@ export function ImageViewer<TData = unknown>({
   // the open animation (see useViewportHeight).
   const viewportH = useViewportHeight(containerRef);
 
-  const zoomPan = useImageZoomPan(imgWrapperRef, index, zoom, zoomToCursor);
+  const zoomPan = useImageZoomPan(imgWrapperRef, index, canZoom, zoomToCursor, wheel);
   const {
     imgRef,
     displayScale,
@@ -231,13 +270,12 @@ export function ImageViewer<TData = unknown>({
     slideAnimating,
     slideDistance,
     commitSlide,
+    jumpTarget,
     refreshSlideDistance,
   } = slide;
 
-  // The stage shift: an imperative ctx.setContentShift wins while non-null,
-  // else the declarative `stageShift` prop.
-  const propShift = stageShift == null ? null : (STAGE_SHIFTS[stageShift] ?? stageShift);
-  const shiftTransform = contentShift.transform ?? propShift;
+  // The stage shift, as a CSS transform (null = centered).
+  const shiftTransform = stageShift == null ? null : (STAGE_SHIFTS[stageShift] ?? stageShift);
 
   // Swipe-to-close. Off while the stage is shifted: the image is off-screen
   // under an overlay, and a vertical drag there belongs to the overlay.
@@ -250,7 +288,15 @@ export function ImageViewer<TData = unknown>({
     onDismiss: () => handleCloseRef.current(),
   });
 
-  const gestures = useGestureHandler(zoomPan, slide, hasPrev, hasNext, zoom, zoomToCursor, dismiss);
+  const gestures = useGestureHandler(
+    zoomPan,
+    slide,
+    hasPrev,
+    hasNext,
+    canZoom,
+    zoomToCursor,
+    dismiss,
+  );
 
   // Shared-element thumbnail zoom: expand out of / collapse back into the source
   // thumbnail, plus load-gating + the delayed loading spinner. See the hook.
@@ -300,75 +346,45 @@ export function ImageViewer<TData = unknown>({
   }, []);
 
   // Warm the neighbors: whenever the active index changes, kick off a background
-  // fetch AND decode of the previous and next images so a swipe/nav to them
-  // draws from the browser's caches instead of waiting on the network. The
-  // adjacent <img> panels only mount mid-swipe, so without this the first frame
-  // of a button/keyboard move (or a fresh swipe) hits the wire cold — and
+  // fetch AND decode of the images within `preloadCount` of it so a swipe/nav
+  // to them draws from the browser's caches instead of waiting on the network.
+  // The adjacent <img> panels only mount mid-swipe, so without this the first
+  // frame of a button/keyboard move (or a fresh swipe) hits the wire cold — and
   // without the decode() the first swipe frame pays the (main-thread-visible)
   // decode of a full-size photo right as the gesture starts. Warming runs at
   // low fetch priority so it never competes with the active image on a
-  // constrained connection. We hold the Image objects until they settle so an
-  // in-flight fetch isn't aborted by GC.
+  // constrained connection, and backs off entirely under Save-Data unless the
+  // consumer asked for a window explicitly. Requests go through prefetchItem,
+  // so a source a tile hover already fetched isn't requested again.
   //
   // Keyed on the neighbors' source strings, not on `items` identity, so a
   // consumer that rebuilds `items` every render (`items={photos.map(…)}`)
   // doesn't tear down and restart the warm on each of those renders.
-  const prevWarm = hasPrevLinear ? items[index - 1] : hasPrev ? items[items.length - 1] : undefined;
-  const nextWarm = hasNextLinear ? items[index + 1] : hasNext ? items[0] : undefined;
-  const prevWarmSrc = prevWarm?.src;
-  const prevWarmSrcSet = prevWarm?.srcSet;
-  const prevWarmSizes = prevWarm?.sizes;
-  const nextWarmSrc = nextWarm?.src;
-  const nextWarmSrcSet = nextWarm?.srcSet;
-  const nextWarmSizes = nextWarm?.sizes;
+  const warmCount = Math.max(0, Math.floor(preloadCount ?? (prefersSaveData() ? 0 : 1)));
+  const warmSources: [string, string | undefined, string | undefined][] = [];
+  for (let d = 1; d <= warmCount; d++) {
+    for (const j of [index - d, index + d]) {
+      const k = loop ? ((j % items.length) + items.length) % items.length : j;
+      const w = k !== index ? items[k] : undefined;
+      if (w && !warmSources.some(([src]) => src === w.src)) {
+        warmSources.push([w.src, w.srcSet, w.sizes]);
+      }
+    }
+  }
+  const warmKey = JSON.stringify(warmSources);
   // Sources known to be in the browser's caches: warmed neighbors, full images
   // a thumbnail-first open decoded off-DOM, and anything already shown. Gates
   // `decoding="sync"` on the active image (see there).
   const warmSrcsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const loaders: HTMLImageElement[] = [];
-    for (const warm of [
-      { src: prevWarmSrc, srcSet: prevWarmSrcSet, sizes: prevWarmSizes },
-      { src: nextWarmSrc, srcSet: nextWarmSrcSet, sizes: nextWarmSizes },
-    ]) {
-      if (!warm.src) continue;
-      const img = new Image();
-      if ("fetchPriority" in img) img.fetchPriority = "low";
-      // Mirror the panel <img>'s srcset/sizes so the warmed resource is the
-      // one the browser will actually pick when the panel mounts.
-      if (warm.srcSet) {
-        img.srcset = warm.srcSet;
-        if (warm.sizes) img.sizes = warm.sizes;
-      }
-      img.src = warm.src;
+    for (const [src, srcSet, sizes] of JSON.parse(warmKey) as typeof warmSources) {
+      prefetchItem({ src, srcSet, sizes }, { priority: "low" });
       // Marked on request, not on decode: a swipe/button commit waits on its
       // own decode of the target before navigating, so by the time this src
       // becomes the active image it is decoded (or the commit timed out).
-      warmSrcsRef.current.add(warm.src);
-      const done = () => {
-        const i = loaders.indexOf(img);
-        if (i !== -1) loaders.splice(i, 1);
-      };
-      if (typeof img.decode === "function") {
-        img.decode().then(done, done);
-      } else {
-        img.onload = done;
-        img.onerror = done;
-      }
-      loaders.push(img);
+      warmSrcsRef.current.add(src);
     }
-
-    return () => {
-      // Drop refs on navigation; any completed fetch/decode stays cached.
-      for (const img of loaders) {
-        img.onload = null;
-        img.onerror = null;
-      }
-      loaders.length = 0;
-    };
-  }, [prevWarmSrc, prevWarmSrcSet, prevWarmSizes, nextWarmSrc, nextWarmSrcSet, nextWarmSizes]);
+  }, [warmKey]);
 
   // A thumbnail-first open decodes the full image off-DOM before swapping it in
   // over the placeholder, so that src is warm by the time it renders.
@@ -378,8 +394,59 @@ export function ImageViewer<TData = unknown>({
   }, [placeholderSrc, activeSrc]);
   const handleActiveImageLoad = useCallback(() => {
     if (!placeholderSrc && activeSrc) warmSrcsRef.current.add(activeSrc);
+    setRetryingSrc(null);
     onImageLoad();
   }, [placeholderSrc, activeSrc, onImageLoad]);
+  // Zoom-resolution upgrade: once a zoom past ZOOM_UPGRADE_AT settles, decode a
+  // sharper source off-DOM (item.zoomSrc, else the srcSet candidate the zoomed
+  // width calls for) and swap it in as a plain src. The box is pinned to its
+  // size at the swap, so a source with a bigger intrinsic size can't resize it.
+  // Only ever goes up; navigation drops it (keyed on the item's src).
+  const [upgrade, setUpgrade] = useState<{ for: string; src: string; w: number; h: number }>();
+  const upgraded = upgrade?.for === activeSrc ? upgrade : undefined;
+  const upgradeWantRef = useRef({ for: "", width: 0 });
+  const zoomSrc = item?.zoomSrc;
+  const activeSrcSet = item?.srcSet;
+  useEffect(() => {
+    const img = imgRef.current;
+    if (displayScale < ZOOM_UPGRADE_AT || !img || !activeSrc || placeholderSrc || loadFailed)
+      return;
+    if (!zoomSrc && !activeSrcSet) return;
+    const t = setTimeout(() => {
+      const width = Math.ceil(img.offsetWidth * displayScale);
+      const want = upgradeWantRef.current;
+      // zoomSrc is one fixed source: fetch it once. A srcSet re-asks per wider zoom.
+      if (want.for === activeSrc && (zoomSrc || want.width >= width)) return;
+      upgradeWantRef.current = { for: activeSrc, width };
+      const probe = new Image();
+      if (!zoomSrc) {
+        probe.sizes = `${width}px`;
+        probe.srcset = activeSrcSet!;
+      }
+      probe.src = zoomSrc ?? activeSrc;
+      const box = { for: activeSrc, w: img.offsetWidth, h: img.offsetHeight };
+      probe.decode().then(
+        () => {
+          const src = probe.currentSrc || probe.src;
+          if (src !== img.currentSrc) setUpgrade({ ...box, src });
+        },
+        () => {},
+      );
+    }, 300);
+    return () => clearTimeout(t);
+  }, [displayScale, activeSrc, activeSrcSet, zoomSrc, placeholderSrc, loadFailed, imgRef]);
+
+  const handleActiveImageError = useCallback(() => {
+    // A sharper source that won't load just falls back to the one shown before.
+    if (upgraded) return setUpgrade(undefined);
+    if (onImageError() && activeSrc) setFailedSrc(activeSrc);
+    setRetryingSrc(null);
+  }, [onImageError, activeSrc, upgraded]);
+  const retry = useStableCallback(() => {
+    setFailedSrc(null);
+    setRetryingSrc(activeSrc ?? null);
+    setRetryKey((k) => k + 1);
+  });
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => setVisible(true));
@@ -393,60 +460,81 @@ export function ImageViewer<TData = unknown>({
   // Back button / gesture: runs through onEscape first, like the Escape key, so
   // an open overlay can claim it. Returns true when claimed (viewer stays open).
   // handleCloseRef is assigned below; this only runs on a later popstate.
-  const { release: releaseHistory } = useViewerHistory(historyOption, item, () => {
-    if (onEscapeRef.current?.()) return true;
-    handleCloseRef.current();
-    return false;
-  });
+  const { release: releaseHistory } = useViewerHistory(
+    historyOption,
+    item,
+    () => {
+      if (onEscapeRef.current?.()) return true;
+      handleCloseRef.current();
+      return false;
+    },
+    // `paging: "push"`: back/forward landed on another item's entry. An overlay
+    // can claim the press first, as with Escape; otherwise show that item.
+    (itemId) => {
+      if (onEscapeRef.current?.()) return false;
+      const target = items.findIndex((it) => it.id === itemId);
+      if (target !== -1 && target !== index) onIndexChange(target);
+      return true;
+    },
+  );
 
   // A close can be requested more than once (Escape twice, a back press racing
   // the button); only the first runs, so onCloseStart / onClose fire once.
   const closingRef = useRef(false);
-  const handleClose = useCallback(() => {
-    if (closingRef.current) return;
-    closingRef.current = true;
-    onCloseStart?.();
-    releaseHistory();
-    const reduce = prefersReducedMotion();
-    // If the open zoom is still playing, settle the image to its resting pose
-    // first so the collapse measures the real box, not a mid-flight transform.
-    settleEntry();
+  // `then` (from ctx.close) runs once history is released; anything else
+  // passed in (a click event from onClick={handleClose}) is ignored.
+  const handleClose = useCallback(
+    (then?: unknown) => {
+      const after = typeof then === "function" ? (then as () => void) : undefined;
+      if (closingRef.current) {
+        releaseHistory(after);
+        return;
+      }
+      closingRef.current = true;
+      onCloseStart?.();
+      releaseHistory(after);
+      const reduce = prefersReducedMotion();
+      // If the open zoom is still playing, settle the image to its resting pose
+      // first so the collapse measures the real box, not a mid-flight transform.
+      settleEntry();
 
-    // Unmount once the slowest exit is done: the zoom/chrome (ANIM_MS) and the
-    // backdrop's own, longer fade (--rvl-backdrop-out). Unmounting mid-fade cuts
-    // the last of the darkness off in one frame, so the backdrop's transitionend
-    // decides, not a timer started here: the fade only begins on the frame
-    // after this close commits, and that commit does real work (the collapse
-    // measures, the scroll-lock release reflows the page), which on a phone
-    // can push the fade's end tens of ms past a timer's. The timer stays as a
-    // fallback, with slack, for a fade that never runs (the backdrop already
-    // at 0 after a long swipe, or a consumer's `transition: none`).
-    const backdrop = backdropRef.current;
-    const fadeMs = cssDurationMs(backdrop, "--rvl-backdrop-out", ANIM_MS);
-    // Whichever comes first; the listener goes with the unmounted backdrop.
-    let closed = false;
-    const finish = () => {
-      if (!closed) onClose();
-      closed = true;
-    };
-    // Only a fade at least as long as the collapse can say the exit is over;
-    // a consumer's quicker one leaves it to the timer.
-    if (!reduce && fadeMs >= ANIM_MS)
-      backdrop?.addEventListener("transitionend", (e) => {
-        if (e.target === backdrop && e.propertyName === "opacity") finish();
-      });
+      // Unmount once the slowest exit is done: the zoom/chrome (ANIM_MS) and the
+      // backdrop's own, longer fade (--rvl-backdrop-out). Unmounting mid-fade cuts
+      // the last of the darkness off in one frame, so the backdrop's transitionend
+      // decides, not a timer started here: the fade only begins on the frame
+      // after this close commits, and that commit does real work (the collapse
+      // measures, the scroll-lock release reflows the page), which on a phone
+      // can push the fade's end tens of ms past a timer's. The timer stays as a
+      // fallback, with slack, for a fade that never runs (the backdrop already
+      // at 0 after a long swipe, or a consumer's `transition: none`).
+      const backdrop = backdropRef.current;
+      const fadeMs = cssDurationMs(backdrop, "--rvl-backdrop-out", ANIM_MS);
+      // Whichever comes first; the listener goes with the unmounted backdrop.
+      let closed = false;
+      const finish = () => {
+        if (!closed) onClose();
+        closed = true;
+      };
+      // Only a fade at least as long as the collapse can say the exit is over;
+      // a consumer's quicker one leaves it to the timer.
+      if (!reduce && fadeMs >= ANIM_MS)
+        backdrop?.addEventListener("transitionend", (e) => {
+          if (e.target === backdrop && e.propertyName === "opacity") finish();
+        });
 
-    setClosing(true);
-    setVisible(false);
+      setClosing(true);
+      setVisible(false);
 
-    // The collapse-into-thumbnail FLIP is played from the layout effect below,
-    // *after* the `closing` commit releases the body scroll lock: releasing
-    // `position: fixed` reflows the page (thumbnail back to its in-flow rect), so
-    // measuring the collapse target here — before that reflow — would fly the
-    // image to the locked-layout rect and then snap to the settled thumbnail on
-    // unmount. Deferring lets the FLIP target the thumbnail's final resting box.
-    setTimeout(finish, reduce ? 0 : Math.max(ANIM_MS, fadeMs) + EXIT_SLACK_MS);
-  }, [onClose, onCloseStart, releaseHistory, settleEntry]);
+      // The collapse-into-thumbnail FLIP is played from the layout effect below,
+      // *after* the `closing` commit releases the body scroll lock: releasing
+      // `position: fixed` reflows the page (thumbnail back to its in-flow rect), so
+      // measuring the collapse target here — before that reflow — would fly the
+      // image to the locked-layout rect and then snap to the settled thumbnail on
+      // unmount. Deferring lets the FLIP target the thumbnail's final resting box.
+      setTimeout(finish, reduce ? 0 : Math.max(ANIM_MS, fadeMs) + EXIT_SLACK_MS);
+    },
+    [onClose, onCloseStart, releaseHistory, settleEntry],
+  );
   const handleCloseRef = useRef(handleClose);
   useLayoutEffect(() => {
     handleCloseRef.current = handleClose;
@@ -488,7 +576,8 @@ export function ImageViewer<TData = unknown>({
   // backdrop begins fading — no gap where the un-collapsed image is visible.
   useLayoutEffect(() => {
     // A swipe-to-close with no thumbnail to land in carries on off-screen.
-    if (closing && !playCollapse()) dismiss.flyOut();
+    // A broken image has nothing to collapse; it fades with the track.
+    if (closing && (loadFailed || !playCollapse())) dismiss.flyOut();
     // `closing` only ever flips false→true (the viewer then unmounts), so this
     // runs the collapse exactly once. Intentionally not keyed on playCollapse.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -499,6 +588,31 @@ export function ImageViewer<TData = unknown>({
   // tap on the overlay's empty space. Closing then would discard the overlay
   // along with the viewer, so backdrop close is off until the stage is back.
   const backdropCloses = closeOnBackdropClick && !shiftTransform;
+
+  // tapToToggleChrome: a single tap or click hides/shows the bars. It waits
+  // out the double-tap window (when zoom can claim a double tap) so a double
+  // tap zooms without flickering the chrome. `pendingTap` holds that wait.
+  const [chromeHidden, setChromeHidden] = useState(false);
+  const pendingTapRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastTouchEndRef = useRef(0);
+  useEffect(() => () => clearTimeout(pendingTapRef.current), []);
+  const registerTap = useCallback(
+    (second: boolean) => {
+      if (!tapToToggleChrome || closingRef.current) return;
+      clearTimeout(pendingTapRef.current);
+      const wasPending = pendingTapRef.current !== undefined;
+      pendingTapRef.current = undefined;
+      // The second tap of a double tap: that was a zoom, not a toggle.
+      if (second || (wasPending && canZoom)) return;
+      const toggle = () => {
+        pendingTapRef.current = undefined;
+        setChromeHidden((h) => !h);
+      };
+      if (canZoom) pendingTapRef.current = setTimeout(toggle, DOUBLE_TAP_MS);
+      else toggle();
+    },
+    [tapToToggleChrome, canZoom],
+  );
 
   // Touch-tap close for the backdrop/stage. On iOS a tap that closes the viewer
   // via the synthesized `click` also fires synthesized mouse events (mouseover /
@@ -528,23 +642,39 @@ export function ImageViewer<TData = unknown>({
   const handleTrackTouchEnd = useCallback(
     (e: React.TouchEvent) => {
       gestures.handleTouchEnd(e);
-      if (!backdropCloses) return;
-      if (e.target !== e.currentTarget) return;
-      if (gestures.gestureMovedRef.current) return;
-      e.preventDefault();
-      handleClose();
+      lastTouchEndRef.current = Date.now();
+      if (gestures.gestureMovedRef.current || e.touches.length > 0) return;
+      if (backdropCloses && e.target === e.currentTarget) {
+        e.preventDefault();
+        handleClose();
+        return;
+      }
+      registerTap(false);
     },
-    [gestures, backdropCloses, handleClose],
+    [gestures, backdropCloses, handleClose, registerTap],
+  );
+
+  // A mouse click on the image (or the empty stage, when it doesn't close)
+  // toggles the chrome. Skips the click a touch tap synthesizes (that tap was
+  // already counted on touchend) and the end of a drag.
+  const handleStageClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (isGhostMouseEvent() || Date.now() - lastTouchEndRef.current < GHOST_CLICK_MS) return;
+      if (gestures.gestureMovedRef.current) return;
+      registerTap(e.detail > 1);
+    },
+    [gestures, isGhostMouseEvent, registerTap],
   );
 
   const handleTrackClick = useCallback(
     (e: React.MouseEvent) => {
       if (e.target !== e.currentTarget) return;
+      if (!backdropCloses) return handleStageClick(e);
       if (isGhostMouseEvent()) return;
       if (gestures.gestureMovedRef.current) return;
       handleClose();
     },
-    [gestures, isGhostMouseEvent, handleClose],
+    [gestures, isGhostMouseEvent, handleClose, backdropCloses, handleStageClick],
   );
 
   // Mouse double-click zoom, minus the iOS ghost dblclick from the opening tap
@@ -577,19 +707,19 @@ export function ImageViewer<TData = unknown>({
     [hasPrev, hasNext, commitSlide],
   );
 
-  const setContentShift = useCallback((transform: string | null, animate = true) => {
-    setContentShiftState({ transform, animate });
-  }, []);
-
   // Context actions: identity-stable for the viewer's whole life (see
   // useStableCallback), so the memoized ctx below only changes when a value a
   // slot can read changes.
   const goPrev = useStableCallback(() => navigate("prev"));
   const goNext = useStableCallback(() => navigate("next"));
+  // A jump slides like a step (onNavigate, then the slide), with the target
+  // in the neighbor panel on the side it lies. A zoom is dropped first.
   const goTo = useStableCallback((i: number) => {
-    if (i !== index && i >= 0 && i < items.length) onIndexChange(i);
+    if (i === index || i < 0 || i >= items.length) return;
+    if (transformRef.current.scale > 1) setTransform({ scale: 1, x: 0, y: 0 });
+    commitSlide(i < index ? "prev" : "next", undefined, i);
   });
-  const close = useStableCallback(() => handleClose());
+  const close = useStableCallback((then?: () => void) => handleClose(then));
   const zoomIn = useStableCallback(() => {
     const t = transformRef.current;
     const next = Math.min(MAX_SCALE, t.scale * 1.3);
@@ -623,7 +753,7 @@ export function ImageViewer<TData = unknown>({
       const zoomed = t.scale > 1;
       // Zoom keys need the image on screen: not while an overlay has shifted
       // the stage out of view.
-      if (zoom && !shiftTransform) {
+      if (canZoom && !shiftTransform) {
         if (e.key === "+" || e.key === "=") {
           e.preventDefault();
           zoomIn();
@@ -682,7 +812,7 @@ export function ImageViewer<TData = unknown>({
     navigate,
     onEscape,
     disableNavigation,
-    zoom,
+    canZoom,
     shiftTransform,
     zoomIn,
     zoomOut,
@@ -718,9 +848,9 @@ export function ImageViewer<TData = unknown>({
       zoomOut,
       resetZoom: resetTransform,
       isTouchDevice,
+      chromeHidden,
       topBarHeight: topBarH,
       bottomBarHeight: bottomBarH,
-      setContentShift,
     }),
     [
       items,
@@ -740,9 +870,9 @@ export function ImageViewer<TData = unknown>({
       zoomOut,
       resetTransform,
       isTouchDevice,
+      chromeHidden,
       topBarH,
       bottomBarH,
-      setContentShift,
     ],
   );
 
@@ -750,14 +880,28 @@ export function ImageViewer<TData = unknown>({
   // render functions and re-runs them as before; a viewer-internal re-render
   // reuses the same element, which React skips reconciling entirely — so a
   // swipe no longer re-renders a heavy overlay (drawer, graph) twice per slide.
-  const header = useMemo(() => renderHeader?.(ctx), [renderHeader, ctx]);
-  const headerActions = useMemo(() => renderHeaderActions?.(ctx), [renderHeaderActions, ctx]);
-  const headerMeta = useMemo(() => renderHeaderMeta?.(ctx), [renderHeaderMeta, ctx]);
-  const navStart = useMemo(() => renderNavStart?.(ctx), [renderNavStart, ctx]);
-  const navEnd = useMemo(() => renderNavEnd?.(ctx), [renderNavEnd, ctx]);
-  const footer = useMemo(() => renderFooter?.(ctx), [renderFooter, ctx]);
-  const overlay = useMemo(() => renderOverlay?.(ctx), [renderOverlay, ctx]);
-  const imageOverlay = useMemo(() => renderImageOverlay?.(ctx), [renderImageOverlay, ctx]);
+  const header = useSlot(renderHeader, ctx);
+  const headerActions = useSlot(renderHeaderActions, ctx);
+  const headerMeta = useSlot(renderHeaderMeta, ctx);
+  const navStart = useSlot(renderNavStart, ctx);
+  const navEnd = useSlot(renderNavEnd, ctx);
+  const footer = useSlot(renderFooter, ctx);
+  const overlay = useSlot(renderOverlay, ctx);
+  const imageOverlay = useSlot(renderImageOverlay, ctx);
+  const errorContent = useMemo(
+    () =>
+      !loadFailed ? null : renderError ? (
+        renderError(ctx, retry)
+      ) : (
+        <>
+          <p className="rvl-error-text">Couldn't load image</p>
+          <button type="button" className="rvl-btn rvl-error-retry" onClick={retry}>
+            Retry
+          </button>
+        </>
+      ),
+    [loadFailed, renderError, ctx, retry],
+  );
   const hintContent = useMemo(
     () =>
       typeof hint === "function"
@@ -769,9 +913,10 @@ export function ImageViewer<TData = unknown>({
               navigation: !disableNavigation,
               zoom,
               dismiss: swipeToClose,
+              wheelZooms: wheel === "zoom",
             })
           : null,
-    [hint, ctx, disableNavigation, zoom, swipeToClose],
+    [hint, ctx, disableNavigation, zoom, swipeToClose, wheel],
   );
 
   // A viewer that mounts already shifted (e.g. opened straight onto a drawer)
@@ -779,12 +924,24 @@ export function ImageViewer<TData = unknown>({
   // snaps, later changes animate. Read in render on purpose — it only gates
   // the CSS transition, and it's false for every render before the mount
   // commits (StrictMode's double render included).
+  //
+  // A shift cleared as a slide starts (a drawer closed from onNavigate) snaps
+  // back too: the next image then slides in level instead of dropping in on a
+  // diagonal, and the overlay that's leaving still covers the jump.
   const shiftMountedRef = useRef(false);
   useEffect(() => {
     shiftMountedRef.current = true;
   }, []);
-  const shiftAnimate =
-    contentShift.transform != null ? contentShift.animate : shiftMountedRef.current;
+  const shiftAnimate = shiftMountedRef.current && !(slideAnimating && !shiftTransform);
+
+  // After the first slide change, each new image's overlay remounts (keyed on
+  // the index) with a quick fade-in, instead of its content swapping in place.
+  const openIndexRef = useRef(index);
+  const navigatedRef = useRef(false);
+  useLayoutEffect(() => {
+    if (index !== openIndexRef.current) navigatedRef.current = true;
+  }, [index]);
+  const imageOverlayEnters = navigatedRef.current || index !== openIndexRef.current;
 
   if (!item) return null;
 
@@ -799,12 +956,26 @@ export function ImageViewer<TData = unknown>({
     ...(navHeight != null && { "--rvl-nav-height": dim(navHeight) }),
     ...(navInset != null && { "--rvl-nav-inset": dim(navInset) }),
     ...(counterFontSize != null && { "--rvl-counter-font-size": dim(counterFontSize) }),
+    ...(accent && { "--rvl-accent": accent }),
   } as React.CSSProperties;
   // Keep the image hidden (but laid out, so the zoom can still measure its box)
   // until something decoded is ready to show, so the entry plays from the
   // thumbnail with no full-size flash. opacity, not display, to preserve the
   // layout box.
-  const activeImgStyle: React.CSSProperties = holdHidden ? { ...imgStyle, opacity: 0 } : imgStyle;
+  // A broken image stays laid out but unseen (no broken-image icon or alt text);
+  // the error state shows in its place.
+  const activeImgStyle: React.CSSProperties = loadFailed
+    ? { ...imgStyle, visibility: "hidden" }
+    : holdHidden
+      ? { ...imgStyle, opacity: 0 }
+      : upgraded
+        ? { ...imgStyle, width: upgraded.w, height: upgraded.h }
+        : imgStyle;
+  // Image-overlay content (a badge) comes and goes with the chrome: it fades in
+  // alongside the bars as the viewer opens and out as soon as a close starts,
+  // rather than lingering while the image collapses away. Also held while the
+  // image itself is (a slow load), so it never floats over the spinner.
+  const imageOverlayShown = visible && !closing && !holdHidden && !loadFailed;
 
   const totalDigits = String(items.length).length;
   const counterMinWidth = `${totalDigits * 2 * 0.6 + 1.5}em`;
@@ -812,8 +983,17 @@ export function ImageViewer<TData = unknown>({
   // Three-slot carousel neighbors. When looping, the slots at the ends point at
   // the wrap-around items (last ↔ first) so the wrapping slide has a real image
   // to reveal instead of an empty panel.
-  const prevIndex = hasPrevLinear ? index - 1 : hasPrev ? items.length - 1 : -1;
-  const nextIndex = hasNextLinear ? index + 1 : hasNext ? 0 : -1;
+  // A goTo jump puts its target in the panel on the side it slides from.
+  const jumpsBack = jumpTarget != null && jumpTarget < index;
+  const prevIndex = jumpsBack
+    ? jumpTarget
+    : hasPrevLinear
+      ? index - 1
+      : hasPrev
+        ? items.length - 1
+        : -1;
+  const nextIndex =
+    jumpTarget != null && !jumpsBack ? jumpTarget : hasNextLinear ? index + 1 : hasNext ? 0 : -1;
   const prevItem = prevIndex >= 0 ? items[prevIndex] : null;
   const nextItem = nextIndex >= 0 ? items[nextIndex] : null;
   const showAdjacent = slideActive || slideAnimating;
@@ -828,10 +1008,10 @@ export function ImageViewer<TData = unknown>({
   // below or React would clobber those writes on unrelated re-renders.
   const adjacentOffset = slideDistance || (typeof window === "undefined" ? 0 : window.innerWidth);
 
-  // Never show the zoom controls while the image is shifted out of view (e.g. a
-  // consumer-driven details/overlay pane pushed in via setContentShift): the
-  // image isn't on screen, so zooming it makes no sense.
-  const showZoomCtrls = zoom && !isTouchDevice && showZoomControls && !shiftTransform;
+  // Never show the zoom controls while the image is shifted out of view (a
+  // details pane pushed in via stageShift): the image isn't on screen, so
+  // zooming it makes no sense.
+  const showZoomCtrls = canZoom && !isTouchDevice && showZoomControls && !shiftTransform;
   const hasNavGroup = hasPrev || hasNext;
   const showNavRow = !isZoomed && (hasNavGroup || navStart != null || navEnd != null);
 
@@ -875,7 +1055,12 @@ export function ImageViewer<TData = unknown>({
   return (
     <div
       ref={containerRef}
-      className={cx("rvl-root", visible && !closing && "rvl-visible", cn("root"))}
+      className={cx(
+        "rvl-root",
+        visible && !closing && "rvl-visible",
+        chromeHidden && "rvl-chrome-hidden",
+        cn("root"),
+      )}
       role="dialog"
       aria-modal="true"
       aria-label={ariaLabel ?? item.alt ?? "Image viewer"}
@@ -939,7 +1124,7 @@ export function ImageViewer<TData = unknown>({
           onTouchStart={gestures.handleTouchStart}
           onTouchMove={gestures.handleTouchMove}
           onTouchEnd={handleTrackTouchEnd}
-          onClick={backdropCloses ? handleTrackClick : undefined}
+          onClick={backdropCloses || tapToToggleChrome ? handleTrackClick : undefined}
           className={cx(
             "rvl-track",
             // Promote the track only while a swipe is live (drag + commit/snap
@@ -987,17 +1172,23 @@ export function ImageViewer<TData = unknown>({
             // Gestures live on the track (which spans the viewport); the wrapper
             // only stops a tap/click on the image itself from bubbling up to the
             // track's backdrop-close handler.
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (tapToToggleChrome) handleStageClick(e);
+            }}
             onDoubleClick={handleDoubleClickGuarded}
           >
             <img
               ref={imgRef}
+              // A retry remounts the element so the browser fetches again.
+              key={retryKey}
               // While a placeholder stands in (thumbnail-first open), it's the
               // whole source: a srcset would outrank it. The full image swaps
               // in, already decoded, once ready (see useSharedElementZoom).
-              src={placeholderSrc ?? item.src}
-              srcSet={placeholderSrc ? undefined : item.srcSet}
-              sizes={placeholderSrc ? undefined : item.sizes}
+              // A zoom upgrade, like a placeholder, is the whole source.
+              src={upgraded?.src ?? placeholderSrc ?? item.src}
+              srcSet={upgraded || placeholderSrc ? undefined : item.srcSet}
+              sizes={upgraded || placeholderSrc ? undefined : item.sizes}
               alt={item.alt ?? ""}
               // `sync` for a warm src, so a navigation src-swap presents the new
               // image atomically with the same-frame DOM changes around it. On a
@@ -1013,19 +1204,49 @@ export function ImageViewer<TData = unknown>({
               // thread on a full-size decode, and buys nothing: an uncached src
               // paints blank until its bytes arrive whatever `decoding` says.
               // The placeholder itself comes from an already-loaded tile.
-              decoding={placeholderSrc || warmSrcsRef.current.has(item.src) ? "sync" : "async"}
+              // An upgrade was decoded off-DOM first, so it's warm too.
+              decoding={
+                upgraded || placeholderSrc || warmSrcsRef.current.has(item.src) ? "sync" : "async"
+              }
               className={cx("rvl-img", cn("image"))}
               style={activeImgStyle}
               draggable={false}
               onLoad={handleActiveImageLoad}
-              onError={onImageError}
+              onError={handleActiveImageError}
             />
-            {imageOverlay}
+            {imageOverlay != null && (
+              <div
+                key={index}
+                className={cx(
+                  "rvl-image-overlay",
+                  imageOverlayShown && "rvl-image-overlay-shown",
+                  imageOverlayEnters && "rvl-image-overlay-enter",
+                  cn("imageOverlay"),
+                )}
+              >
+                {imageOverlay}
+              </div>
+            )}
           </div>
 
-          {showSpinner && (
+          {(showSpinner || (retryingSrc !== null && retryingSrc === activeSrc)) && (
             <div className={cx("rvl-spinner", cn("spinner"))} role="status" aria-label="Loading">
               <span className="rvl-spinner-ring" aria-hidden="true" />
+            </div>
+          )}
+
+          {errorContent != null && errorContent !== false && (
+            // Taps here are for the error UI (Retry), not the track's gestures
+            // or its backdrop close.
+            <div
+              className={cx("rvl-error", cn("error"))}
+              role="alert"
+              onClick={stopPropagation}
+              onPointerDown={stopPropagation}
+              onTouchStart={stopPropagation}
+              onTouchEnd={stopPropagation}
+            >
+              {errorContent}
             </div>
           )}
 

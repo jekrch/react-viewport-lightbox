@@ -4,7 +4,16 @@ import tsparser from "@typescript-eslint/parser";
 import reactHooks from "eslint-plugin-react-hooks";
 
 export default [
-  { ignores: ["dist", "node_modules", "playground/dist"] },
+  {
+    ignores: [
+      "dist",
+      "node_modules",
+      "playground/dist",
+      "dist-e2e",
+      "test-results",
+      "playwright-report",
+    ],
+  },
   js.configs.recommended,
   {
     files: ["scripts/**/*.mjs"],

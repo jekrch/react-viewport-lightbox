@@ -57,6 +57,10 @@
      via the `navInset` prop; floored by the device safe-area inset. Defaults to
      1.3rem to match the comic-snaps viewer. */
   --rvl-nav-inset: 1.3rem;
+  /* Dead zone around the bottom nav controls (arrows/counter and the nav
+     slots). A click inside it does nothing; past it, the empty nav row counts
+     as backdrop for closeOnBackdropClick. */
+  --rvl-nav-hit-slop: 0.75rem;
   /* How far the backdrop bleeds past the viewport's top/bottom edges. iOS
      Safari's toolbars are translucent: they blur-sample the pixels rendered
      beneath them, and a fixed `inset: 0` layer stops exactly at the toolbar
@@ -208,6 +212,14 @@
 .rvl-root.rvl-visible .rvl-bar {
   opacity: 1;
   transform: translateY(0);
+}
+/* tapToToggleChrome: fade out, then drop out of the tab order and hit testing. */
+.rvl-root.rvl-chrome-hidden .rvl-bar {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--rvl-anim-duration) ease-out,
+    visibility 0s var(--rvl-anim-duration);
 }
 
 @media (min-width: 640px) {
@@ -401,6 +413,33 @@
   max-width: 96vw;
 }
 
+/* renderImageOverlay container: covers the image wrapper, so children
+   positioned against it track the image's own box. Comes in with the bars as
+   the viewer opens (same duration and easing), and fades out over the same
+   span as the close (collapse flight + backdrop) so a badge dissolves in step
+   with the image. */
+.rvl-image-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--rvl-anim-duration) ease-in-out;
+}
+.rvl-image-overlay-shown {
+  opacity: 1;
+  transition-timing-function: ease-out;
+}
+/* After a slide change the container remounts already shown, so the
+   transition can't run: a short keyframe fade brings the new image's badge in. */
+.rvl-image-overlay-enter.rvl-image-overlay-shown {
+  animation: rvl-image-overlay-in 0.15s ease-out;
+}
+@keyframes rvl-image-overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+
 /* Loading spinner: shown only when the opening image is slow to load. Centered
    over the stage; the image itself is held hidden until it has decoded. */
 .rvl-spinner {
@@ -426,6 +465,29 @@
   }
 }
 
+/* Load failure, centered where the image would be. */
+.rvl-error {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: calc(100% - 2rem);
+  color: var(--rvl-bar-fg-muted);
+  font-size: 0.875rem;
+  text-align: center;
+}
+.rvl-error-text {
+  margin: 0;
+}
+.rvl-error-retry {
+  padding: 0 0.875rem;
+}
+
 /* Bottom nav row ------------------------------------------------------------ */
 
 .rvl-nav-row {
@@ -433,7 +495,12 @@
   width: 100%;
   padding-left: max(var(--rvl-nav-row-pad-x), env(safe-area-inset-left));
   padding-right: max(var(--rvl-nav-row-pad-x), env(safe-area-inset-right));
-  pointer-events: auto;
+  /* The row spans the full width, but only its controls take clicks: the empty
+     stretches beside them pass through to the track below, so they count as
+     backdrop for closeOnBackdropClick (and a swipe can start there). Each
+     control cluster keeps a --rvl-nav-hit-slop dead zone around it (the ::before
+     below) so a near miss on a button lands on nothing instead of closing. */
+  pointer-events: none;
 }
 @media (min-width: 640px) {
   .rvl-nav-row {
@@ -454,6 +521,23 @@
   align-items: center;
   justify-content: center;
   gap: 0.75rem;
+}
+
+/* Control clusters (the group and the start/end slots): the only clickable
+   parts of the nav row. The ::before pads each one's hit area by
+   --rvl-nav-hit-slop. It sits under the cluster's content (z-index -1 inside
+   the cluster's stacking context), so it only catches clicks that miss the
+   controls, and swallows them, since it isn't inside the track. */
+.rvl-nav-inner > * {
+  position: relative;
+  z-index: 0;
+  pointer-events: auto;
+}
+.rvl-nav-inner > ::before {
+  content: "";
+  position: absolute;
+  inset: calc(-1 * var(--rvl-nav-hit-slop));
+  z-index: -1;
 }
 
 /* Edge slots: pinned to the nav-inner box edges so the nav group stays
@@ -482,7 +566,9 @@
 }
 .rvl-nav-inline .rvl-nav-start,
 .rvl-nav-inline .rvl-nav-end {
-  position: static;
+  /* In flow; relative (not static) only so the hit-slop ::before anchors here. */
+  position: relative;
+  top: auto;
   transform: none;
 }
 
@@ -626,9 +712,13 @@
   .rvl-stage,
   .rvl-track,
   .rvl-overlay,
+  .rvl-image-overlay,
   .rvl-hint,
   .rvl-btn,
   .rvl-nav-btn {
     transition-duration: 0.01ms !important;
+  }
+  .rvl-image-overlay {
+    animation-duration: 0.01ms !important;
   }
 }

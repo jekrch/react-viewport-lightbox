@@ -60,7 +60,10 @@ import { useLayoutEffect } from "react";
  * shifted the page left. The measurement forces a layout, so it only runs when
  * the root has a space-taking scrollbar to begin with (`innerWidth` exceeds the
  * root's `clientWidth`) — never on touch devices or overlay-scrollbar desktops,
- * whose open path stays a single layout.
+ * whose open path stays a single layout. Where it does run, the offset is
+ * predicted from the root's computed style and written along with the pin, and
+ * the measurement only corrects it on a miss (a browser zoom's fractional
+ * scrollbar), so a correct guess keeps the open to one layout of the pinned page.
  *
  * Applied and released via `useLayoutEffect`, so the `position: fixed` toggle is
  * folded into a paint rather than landing a frame late. On iOS Safari that
@@ -84,9 +87,35 @@ let previousRootMinHeight = "";
 let previousScrollbarVar = "";
 let lockedScrollY = 0;
 let compensation = 0;
+// A release's held scrollbar (see the cleanup), and how to let it go.
+let pendingRelease = 0;
+let previousBodyOverflowY = "";
+
+function finishRelease(): void {
+  if (!pendingRelease) return;
+  cancelAnimationFrame(pendingRelease);
+  pendingRelease = 0;
+  document.body.style.overflowY = previousBodyOverflowY;
+}
 
 /** Root-element custom property holding the scrollbar width a lock compensates for. */
 export const SCROLLBAR_WIDTH_VAR = "--rvl-scrollbar-width";
+
+/**
+ * Offsets the pinned body by `px` and publishes it as the variable — only when
+ * there's a width to report (see above): writing it at all restyles the whole
+ * page. Back to 0 hands the host's own value back.
+ */
+function setCompensation(px: number): void {
+  const rootStyle = document.documentElement.style;
+  document.body.style.right = `${px}px`;
+  if (px > 0) rootStyle.setProperty(SCROLLBAR_WIDTH_VAR, `${px}px`);
+  else if (compensation > 0) {
+    if (previousScrollbarVar) rootStyle.setProperty(SCROLLBAR_WIDTH_VAR, previousScrollbarVar);
+    else rootStyle.removeProperty(SCROLLBAR_WIDTH_VAR);
+  }
+  compensation = px;
+}
 
 /**
  * The scrollbar width (px) the active lock is compensating for: how much wider
@@ -105,10 +134,27 @@ export function useBodyScrollLock(isLocked: boolean): void {
     if (typeof document === "undefined") return;
 
     if (lockCount === 0) {
+      // A reopen within a frame of the last close: drop that close's held
+      // scrollbar first, or the saved body overflow would include it.
+      finishRelease();
       const root = document.documentElement;
       const hasScrollbar = window.innerWidth > root.clientWidth;
       // Laid-out width, not clientWidth (see above). Only read when it's used.
       const widthBefore = hasScrollbar ? root.getBoundingClientRect().width : 0;
+      // The width the lock will give back, predicted before pinning so the
+      // offset (and the variable) go in with the pin and land in the same
+      // layout as it. Writing them after measuring the pinned body costs a
+      // second full-page layout, plus a separate restyle for the variable.
+      // The root keeps its scrollbar space under a stable gutter, or when its
+      // own overflow (which the body's can't override) shows the scrollbar.
+      const rootStyle = hasScrollbar ? getComputedStyle(root) : null;
+      const predicted =
+        rootStyle &&
+        rootStyle.overflowY !== "scroll" &&
+        rootStyle.overflowY !== "auto" &&
+        !(rootStyle.scrollbarGutter || "").includes("stable")
+          ? window.innerWidth - widthBefore
+          : 0;
       lockedScrollY = window.scrollY;
       // Read before the body is pinned, while it still has its real height.
       const scrollHeight = root.scrollHeight;
@@ -134,35 +180,44 @@ export function useBodyScrollLock(isLocked: boolean): void {
       document.body.style.position = "fixed";
       document.body.style.top = `-${lockedScrollY}px`;
       document.body.style.left = "0px";
-      document.body.style.right = "0px";
-      // How much wider the viewport got from hiding the scrollbar (see above).
-      // Unrounded: at a browser zoom the scrollbar is a fractional width. Under
-      // half a pixel is layout noise, not a scrollbar.
+      compensation = 0;
+      setCompensation(predicted >= 0.5 ? predicted : 0);
+      // How much wider the viewport got from hiding the scrollbar (see above),
+      // measured to confirm the prediction. The root's width doesn't depend on
+      // the body's offset, so this is the one layout the pin needed anyway.
+      // Unrounded: at a browser zoom the scrollbar is a fractional width (and
+      // `innerWidth`, rounded, mispredicts it). Under half a pixel is layout
+      // noise, not a scrollbar.
       const gained = hasScrollbar ? root.getBoundingClientRect().width - widthBefore : 0;
-      compensation = gained >= 0.5 ? gained : 0;
-      if (compensation > 0) document.body.style.right = `${compensation}px`;
-      // Only when there's a width to report (see above): writing it at all
-      // restyles the whole page.
-      if (compensation > 0) root.style.setProperty(SCROLLBAR_WIDTH_VAR, `${compensation}px`);
+      const measured = gained >= 0.5 ? gained : 0;
+      if (Math.abs(measured - compensation) > 0.01) setCompensation(measured);
     }
     lockCount += 1;
 
     return () => {
       lockCount -= 1;
       if (lockCount === 0) {
-        const root = document.documentElement;
+        const held = compensation > 0;
+        setCompensation(0);
         document.body.style.overflow = previousOverflow;
         document.body.style.position = previousPosition;
         document.body.style.top = previousTop;
         document.body.style.left = previousLeft;
         document.body.style.right = previousRight;
-        root.style.minHeight = previousRootMinHeight;
-        if (compensation > 0) {
-          if (previousScrollbarVar)
-            root.style.setProperty(SCROLLBAR_WIDTH_VAR, previousScrollbarVar);
-          else root.style.removeProperty(SCROLLBAR_WIDTH_VAR);
+        document.documentElement.style.minHeight = previousRootMinHeight;
+        // The scrollbar is coming back. Left to `overflow: auto`, Chrome lays the
+        // page out at the full width first, finds it overflows, adds the
+        // scrollbar and lays everything out again: two full-page layouts right
+        // as the close starts. Showing the scrollbar outright for a frame makes
+        // it one, at the width the pinned body already had, so the page's own
+        // boxes don't change. Then hand overflow back to the page. Through the
+        // body (whose overflow reaches the viewport, as the lock's own does):
+        // the same switch on the root restyles every element in the page.
+        if (held) {
+          previousBodyOverflowY = document.body.style.overflowY;
+          document.body.style.overflowY = "scroll";
+          pendingRelease = requestAnimationFrame(finishRelease);
         }
-        compensation = 0;
         // Restore the exact offset the page was pinned at — normally a no-op,
         // since the held range kept it, unless something scrolled meanwhile.
         window.scrollTo(0, lockedScrollY);

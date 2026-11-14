@@ -201,3 +201,97 @@ describe("useGestureHandler — zoom (touch)", () => {
     expect(result.current.zoomPan.isZoomed).toBe(true);
   });
 });
+
+describe("useGestureHandler — zoomed pan", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance", "Date"],
+    });
+  });
+
+  function zoomed() {
+    const hook = setup({ index: 1 });
+    const { zoomPan } = hook.result.current;
+    zoomPan.baseDimsRef.current = { width: 800, height: 600 };
+    act(() => zoomPan.setTransform({ scale: 2, x: 0, y: 0 }));
+    return hook;
+  }
+
+  it("shows grabbing while a mouse drag pans, and coasts after a quick release", () => {
+    const { result } = zoomed();
+    const wrapper = () => result.current.wrapperRef.current!;
+    act(() => result.current.gestures.handlePointerDown(mouse(500, 400)));
+    expect(wrapper().style.cursor).toBe("grabbing");
+    for (let i = 1; i <= 5; i++) {
+      act(() => void vi.advanceTimersByTime(16));
+      act(() => result.current.gestures.handlePointerMove(mouse(500 - i * 10, 400)));
+    }
+    act(() => result.current.gestures.handlePointerUp(mouse(450, 400)));
+    expect(wrapper().style.cursor).toBe("grab");
+    const released = result.current.zoomPan.transformRef.current.x;
+    expect(released).toBe(-50);
+    act(() => void vi.advanceTimersByTime(500));
+    // ~0.6 px/ms leftward keeps it moving past where the pointer let go.
+    expect(result.current.zoomPan.transformRef.current.x).toBeLessThan(released - 50);
+  });
+
+  it("doesn't coast when the pointer stopped before release", () => {
+    const { result } = zoomed();
+    act(() => result.current.gestures.handlePointerDown(mouse(500, 400)));
+    act(() => void vi.advanceTimersByTime(16));
+    act(() => result.current.gestures.handlePointerMove(mouse(450, 400)));
+    act(() => void vi.advanceTimersByTime(200));
+    act(() => result.current.gestures.handlePointerUp(mouse(450, 400)));
+    act(() => void vi.advanceTimersByTime(500));
+    expect(result.current.zoomPan.transformRef.current.x).toBe(-50);
+  });
+
+  it("a touch pan coasts after release, and a new touch stops the glide", () => {
+    const { result } = zoomed();
+    const g = () => result.current.gestures;
+    act(() => g().handleTouchStart(touch([[500, 400]])));
+    for (let i = 1; i <= 5; i++) {
+      act(() => void vi.advanceTimersByTime(16));
+      act(() => g().handleTouchMove(touch([[500, 400 - i * 10]])));
+    }
+    act(() => g().handleTouchEnd(touch([], [[500, 350]])));
+    act(() => void vi.advanceTimersByTime(48));
+    const gliding = result.current.zoomPan.transformRef.current.y;
+    expect(gliding).toBeLessThan(-50);
+    act(() => g().handleTouchStart(touch([[500, 300]])));
+    act(() => void vi.advanceTimersByTime(500));
+    expect(result.current.zoomPan.transformRef.current.y).toBe(gliding);
+  });
+});
+
+describe("useGestureHandler — taps while zoomed", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance", "Date"],
+    });
+  });
+
+  it("a slow pan isn't a tap, and a touch that stops a glide isn't one either", () => {
+    const { result } = setup({ index: 1 });
+    const { zoomPan } = result.current;
+    zoomPan.baseDimsRef.current = { width: 800, height: 600 };
+    act(() => zoomPan.setTransform({ scale: 2, x: 0, y: 0 }));
+    const g = () => result.current.gestures;
+
+    act(() => g().handleTouchStart(touch([[500, 400]])));
+    for (let i = 1; i <= 10; i++) {
+      act(() => void vi.advanceTimersByTime(16));
+      act(() => g().handleTouchMove(touch([[500, 400 - i * 3]])));
+    }
+    expect(g().gestureMovedRef.current).toBe(true);
+    act(() => g().handleTouchEnd(touch([], [[500, 370]])));
+
+    // Gliding now; a touch that lands within the double-tap window stops it
+    // without zooming back out.
+    act(() => void vi.advanceTimersByTime(30));
+    act(() => g().handleTouchStart(touch([[500, 370]])));
+    expect(g().gestureMovedRef.current).toBe(true);
+    act(() => g().handleTouchEnd(touch([], [[500, 370]])));
+    expect(result.current.zoomPan.transformRef.current.scale).toBe(2);
+  });
+});

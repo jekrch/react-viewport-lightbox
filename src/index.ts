@@ -4,6 +4,15 @@ export { ImageViewer } from "./components/ImageViewer";
 export { NavButton } from "./components/NavButton";
 export { ViewerButton, type ViewerButtonProps } from "./components/ViewerButton";
 export { originFromAttribute } from "./originFromAttribute";
+export { useLightbox } from "./useLightbox";
+export type {
+  Lightbox,
+  LightboxPreload,
+  LightboxTriggerHandlers,
+  LightboxTriggerProps,
+  UseLightboxOptions,
+} from "./lightbox";
+export { prefetchItem, type PrefetchOptions, type PrefetchPriority } from "./prefetch";
 export {
   defaultIcons,
   CloseIcon,
@@ -52,6 +61,7 @@ export type {
 
 export type {
   ViewerItem,
+  ViewerItemBase,
   ViewerContext,
   ViewerIcons,
   ViewerSlot,

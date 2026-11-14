@@ -1,5 +1,5 @@
 import { useCallback, useRef } from "react";
-import { computeZoomTransform } from "./math";
+import { computeZoomTransform, releaseVelocity, viewportSize, type PointerSample } from "./math";
 import { MIN_SCALE, MAX_SCALE, type ImageZoomPanState } from "./useImageZoomPan";
 import type { SlideNavigationState } from "./useSlideNavigation";
 import type { SwipeDismissHandlers } from "./useSwipeDismiss";
@@ -31,6 +31,8 @@ interface PanGesture {
   pinchStartScale: number;
   pinchMidpoint: { x: number; y: number } | null;
   lastTouchPos: { x: number; y: number } | null;
+  /** Recent pan positions, for the release velocity that momentum glides on. */
+  samples: PointerSample[];
 }
 
 interface SlideGesture {
@@ -80,6 +82,9 @@ export function useGestureHandler(
     syncDisplayScale,
     resetTransform,
     measureBaseDims,
+    startMomentum,
+    stopMomentum,
+    setGrabbing,
   } = zoomPan;
   const {
     applySlideOffset,
@@ -98,7 +103,22 @@ export function useGestureHandler(
     pinchStartScale: 1,
     pinchMidpoint: null,
     lastTouchPos: null,
+    samples: [],
   });
+
+  // Pan samples: keep a short tail, enough for releaseVelocity's 100 ms window.
+  const samplePan = useCallback((x: number, y: number) => {
+    const samples = panRef.current.samples;
+    samples.push({ t: performance.now(), x, y });
+    if (samples.length > 8) samples.shift();
+  }, []);
+  // A released pan coasts on at the speed it let go with.
+  const releasePan = useCallback(() => {
+    const p = panRef.current;
+    const v = releaseVelocity(p.samples, performance.now());
+    p.samples = [];
+    if (transformRef.current.scale > 1) startMomentum(v.x, v.y);
+  }, [transformRef, startMomentum]);
 
   const slideRef = useRef<SlideGesture>({
     active: false,
@@ -215,18 +235,22 @@ export function useGestureHandler(
     (e: React.PointerEvent) => {
       if (e.pointerType === "touch") return;
 
-      gestureMovedRef.current = false;
+      // A press that catches a glide stops it; it isn't a click.
+      gestureMovedRef.current = stopMomentum();
       if (transformRef.current.scale > 1) {
         e.preventDefault();
         const p = panRef.current;
         p.isDragging = true;
         p.pointerStart = { x: e.clientX, y: e.clientY };
         p.translateStart = { x: transformRef.current.x, y: transformRef.current.y };
+        p.samples = [];
+        samplePan(e.clientX, e.clientY);
+        setGrabbing(true);
       } else {
         beginSlide(e.clientX, e.clientY);
       }
     },
-    [transformRef, beginSlide],
+    [transformRef, beginSlide, stopMomentum, setGrabbing, samplePan],
   );
 
   const handlePointerMove = useCallback(
@@ -241,22 +265,28 @@ export function useGestureHandler(
         const t = transformRef.current;
         const clamped = clampTranslate(p.translateStart.x + dx, p.translateStart.y + dy, t.scale);
         setTransform({ scale: t.scale, ...clamped });
+        samplePan(e.clientX, e.clientY);
         return;
       }
 
       // Mouse slide: lockThreshold=4, angleBias=1 (45° cutoff)
       updateSlide(e.clientX, e.clientY, 4, 1);
     },
-    [transformRef, clampTranslate, setTransform, updateSlide],
+    [transformRef, clampTranslate, setTransform, updateSlide, samplePan],
   );
 
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
       if (e.pointerType === "touch") return;
-      panRef.current.isDragging = false;
+      const p = panRef.current;
+      if (p.isDragging) {
+        p.isDragging = false;
+        setGrabbing(false);
+        releasePan();
+      }
       endSlide(true);
     },
-    [endSlide],
+    [endSlide, setGrabbing, releasePan],
   );
 
   // Touch handlers
@@ -264,6 +294,9 @@ export function useGestureHandler(
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
       const p = panRef.current;
+      // A touch that catches a glide stops it; it isn't a tap.
+      const caught = stopMomentum();
+      p.samples = [];
 
       if (e.touches.length === 2 && zoomEnabled) {
         // Pinch start
@@ -289,18 +322,19 @@ export function useGestureHandler(
           snapBack();
         }
       } else if (e.touches.length === 1) {
-        gestureMovedRef.current = false;
+        gestureMovedRef.current = caught;
         if (transformRef.current.scale > 1) {
           p.lastTouchPos = {
             x: e.touches[0].clientX,
             y: e.touches[0].clientY,
           };
+          p.pointerStart = p.lastTouchPos;
         } else {
           beginSlide(e.touches[0].clientX, e.touches[0].clientY);
         }
       }
     },
-    [transformRef, snapBack, beginSlide, zoomEnabled, dismiss],
+    [transformRef, snapBack, beginSlide, zoomEnabled, dismiss, stopMomentum],
   );
 
   const handleTouchMove = useCallback(
@@ -331,7 +365,7 @@ export function useGestureHandler(
           nextScale,
           prev: { x: t.x, y: t.y },
           focal: { x: midX, y: midY },
-          viewport: { width: window.innerWidth, height: window.innerHeight },
+          viewport: viewportSize(),
           baseDims: baseDimsRef.current,
           zoomToCursor,
           focalPan,
@@ -350,8 +384,15 @@ export function useGestureHandler(
         const touch = e.touches[0];
         const dx = touch.clientX - p.lastTouchPos.x;
         const dy = touch.clientY - p.lastTouchPos.y;
-        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) gestureMovedRef.current = true;
+        // Measured from where the pan began: a slow pan's per-frame steps are
+        // all small, but it still isn't a tap.
+        if (
+          Math.abs(touch.clientX - p.pointerStart.x) > 4 ||
+          Math.abs(touch.clientY - p.pointerStart.y) > 4
+        )
+          gestureMovedRef.current = true;
         p.lastTouchPos = { x: touch.clientX, y: touch.clientY };
+        samplePan(touch.clientX, touch.clientY);
 
         const t = transformRef.current;
         const clamped = clampTranslate(t.x + dx, t.y + dy, t.scale);
@@ -364,7 +405,15 @@ export function useGestureHandler(
         updateSlide(touch.clientX, touch.clientY, 6, 0.8);
       }
     },
-    [transformRef, baseDimsRef, clampTranslate, applyTransform, updateSlide, zoomToCursor],
+    [
+      transformRef,
+      baseDimsRef,
+      clampTranslate,
+      applyTransform,
+      updateSlide,
+      zoomToCursor,
+      samplePan,
+    ],
   );
 
   const handleTouchEnd = useCallback(
@@ -406,12 +455,17 @@ export function useGestureHandler(
         resetTransform();
       }
 
+      // A one-finger pan let go: coast.
+      if (e.touches.length === 0 && !wasPinch && p.lastTouchPos) releasePan();
+
       // One finger remaining after pinch → start pan from that finger
       if (e.touches.length === 1 && transformRef.current.scale > 1) {
+        p.samples = [];
         p.lastTouchPos = {
           x: e.touches[0].clientX,
           y: e.touches[0].clientY,
         };
+        p.pointerStart = p.lastTouchPos;
       } else {
         p.lastTouchPos = null;
       }
@@ -423,7 +477,10 @@ export function useGestureHandler(
         e.touches.length === 0 &&
         e.changedTouches.length === 1 &&
         !wasPinch &&
-        !sg.locked
+        !sg.locked &&
+        // A pan's release (or a touch that stopped a glide) isn't a tap, so it
+        // can't be the first half of a double tap either.
+        !gestureMovedRef.current
       ) {
         const touch = e.changedTouches[0];
         const now = Date.now();
@@ -447,7 +504,7 @@ export function useGestureHandler(
               nextScale: DOUBLE_TAP_ZOOM_SCALE,
               prev: { x: 0, y: 0 },
               focal: { x: touch.clientX, y: touch.clientY },
-              viewport: { width: window.innerWidth, height: window.innerHeight },
+              viewport: viewportSize(),
               baseDims: baseDimsRef.current,
               zoomToCursor,
             });
@@ -477,6 +534,7 @@ export function useGestureHandler(
       zoomEnabled,
       zoomToCursor,
       dismiss,
+      releasePan,
     ],
   );
 

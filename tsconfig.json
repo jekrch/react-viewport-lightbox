@@ -17,8 +17,9 @@
     "verbatimModuleSyntax": false,
     "resolveJsonModule": true,
     "paths": {
-      "@jekrch/react-viewport-lightbox": ["./src/index.ts"]
+      "@jekrch/react-viewport-lightbox": ["./src/index.ts"],
+      "@jekrch/react-viewport-lightbox/lazy": ["./src/lazy.tsx"]
     }
   },
-  "include": ["src", "playground", "vitest.setup.ts"]
+  "include": ["src", "playground", "bench", "e2e", "vitest.setup.ts", "playwright.config.ts"]
 }

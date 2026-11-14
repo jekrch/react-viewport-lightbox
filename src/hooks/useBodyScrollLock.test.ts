@@ -157,6 +157,112 @@ describe("useBodyScrollLock", () => {
     }
   });
 
+  it("writes the offset with the pin, before measuring the pinned body", () => {
+    // Writing it after the measurement dirtied the body again and cost the open
+    // a second full-page layout (and a separate restyle for the variable).
+    const restore = withScrollbar(15);
+    const root = document.documentElement;
+    const measure = root.getBoundingClientRect;
+    const atMeasure: [string, string][] = [];
+    root.getBoundingClientRect = () => {
+      if (document.body.style.position === "fixed")
+        atMeasure.push([
+          document.body.style.right,
+          root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR),
+        ]);
+      return measure.call(root);
+    };
+    try {
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(atMeasure).toEqual([["15px", "15px"]]);
+      expect(document.body.style.right).toBe("15px");
+      unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("predicts no offset under a stable gutter", () => {
+    const restore = withScrollbar(15, true);
+    const root = document.documentElement;
+    const computed = window.getComputedStyle;
+    window.getComputedStyle = ((el: Element) =>
+      el === root
+        ? ({ overflowY: "visible", scrollbarGutter: "stable" } as CSSStyleDeclaration)
+        : computed(el)) as typeof window.getComputedStyle;
+    const measure = root.getBoundingClientRect;
+    const rightAtMeasure: string[] = [];
+    root.getBoundingClientRect = () => {
+      if (document.body.style.position === "fixed") rightAtMeasure.push(document.body.style.right);
+      return measure.call(root);
+    };
+    try {
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(rightAtMeasure).toEqual(["0px"]);
+      expect(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("");
+      unmount();
+    } finally {
+      window.getComputedStyle = computed;
+      restore();
+    }
+  });
+
+  it("predicts no offset when the root's own overflow shows the scrollbar", () => {
+    const restore = withScrollbar(15, true);
+    const root = document.documentElement;
+    const computed = window.getComputedStyle;
+    window.getComputedStyle = ((el: Element) =>
+      el === root
+        ? ({ overflowY: "scroll" } as CSSStyleDeclaration)
+        : computed(el)) as typeof window.getComputedStyle;
+    try {
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(document.body.style.right).toBe("0px");
+      expect(getScrollLockCompensation()).toBe(0);
+      unmount();
+    } finally {
+      window.getComputedStyle = computed;
+      restore();
+    }
+  });
+
+  it("corrects a mispredicted offset to the measured width", () => {
+    // At a browser zoom `innerWidth` is rounded but the scrollbar isn't.
+    const restore = withScrollbar(15);
+    const root = document.documentElement;
+    const measure = root.getBoundingClientRect;
+    root.getBoundingClientRect = () => {
+      const w = document.body.style.overflow === "hidden" ? 999.6 : 984.4;
+      return { ...measure.call(root), width: w } as DOMRect;
+    };
+    try {
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(parseFloat(document.body.style.right)).toBeCloseTo(15.2, 5);
+      expect(parseFloat(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR))).toBeCloseTo(15.2, 5);
+      expect(getScrollLockCompensation()).toBeCloseTo(15.2, 5);
+      unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("drops a mispredicted variable when the measurement finds no width", () => {
+    // jsdom reports no stable gutter, so a gutter that keeps its space is only
+    // found by the measurement; the host's own value must come back.
+    const restore = withScrollbar(15, true);
+    try {
+      const root = document.documentElement;
+      root.style.setProperty(SCROLLBAR_WIDTH_VAR, "3px");
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(document.body.style.right).toBe("0px");
+      expect(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("3px");
+      unmount();
+      expect(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("3px");
+    } finally {
+      restore();
+    }
+  });
+
   it("restores a host's own value for the scrollbar variable on unlock", () => {
     const restore = withScrollbar(15);
     try {
@@ -228,6 +334,98 @@ describe("useBodyScrollLock", () => {
   it("does not lock when isLocked is false", () => {
     renderHook(() => useBodyScrollLock(false));
     expect(document.body.style.overflow).toBe("");
+  });
+
+  describe("release", () => {
+    /** Queues rAF callbacks for the test to run as the next frame. */
+    function manualFrames(): { flush: () => void; restore: () => void } {
+      const raf = window.requestAnimationFrame;
+      const caf = window.cancelAnimationFrame;
+      let queue = new Map<number, FrameRequestCallback>();
+      let id = 0;
+      window.requestAnimationFrame = (cb) => {
+        queue.set(++id, cb);
+        return id;
+      };
+      window.cancelAnimationFrame = (n) => {
+        queue.delete(n);
+      };
+      return {
+        flush: () => {
+          const run = queue;
+          queue = new Map();
+          run.forEach((cb) => cb(0));
+        },
+        restore: () => {
+          window.requestAnimationFrame = raf;
+          window.cancelAnimationFrame = caf;
+        },
+      };
+    }
+
+    it("shows the returning scrollbar outright for a frame", () => {
+      // Left to overflow: auto, Chrome lays the page out twice as the scrollbar
+      // comes back (once without it, once with).
+      const restore = withScrollbar(15);
+      const frames = manualFrames();
+      try {
+        const { unmount } = renderHook(() => useBodyScrollLock(true));
+        unmount();
+        expect(document.body.style.position).toBe("");
+        expect(document.body.style.overflowY).toBe("scroll");
+        frames.flush();
+        expect(document.body.style.overflowY).toBe("");
+      } finally {
+        frames.restore();
+        restore();
+      }
+    });
+
+    it("hands back a host's own overflow-y after the frame", () => {
+      const restore = withScrollbar(15);
+      const frames = manualFrames();
+      try {
+        document.body.style.overflowY = "auto";
+        const { unmount } = renderHook(() => useBodyScrollLock(true));
+        unmount();
+        frames.flush();
+        expect(document.body.style.overflowY).toBe("auto");
+      } finally {
+        document.body.style.overflowY = "";
+        frames.restore();
+        restore();
+      }
+    });
+
+    it("holds nothing when there was no scrollbar to compensate", () => {
+      const frames = manualFrames();
+      try {
+        const { unmount } = renderHook(() => useBodyScrollLock(true));
+        unmount();
+        expect(document.body.style.overflowY).toBe("");
+      } finally {
+        frames.restore();
+      }
+    });
+
+    it("drops the hold when a lock starts again within the frame", () => {
+      const restore = withScrollbar(15);
+      const frames = manualFrames();
+      try {
+        renderHook(() => useBodyScrollLock(true)).unmount();
+        const again = renderHook(() => useBodyScrollLock(true));
+        expect(document.body.style.overflow).toBe("hidden");
+        // The stale frame must not undo the new lock.
+        frames.flush();
+        expect(document.body.style.overflow).toBe("hidden");
+        again.unmount();
+        frames.flush();
+        expect(document.body.style.overflow).toBe("");
+      } finally {
+        frames.restore();
+        restore();
+      }
+    });
   });
 
   it("reference-counts concurrent locks so the last unlock wins", () => {

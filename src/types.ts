@@ -1,14 +1,7 @@
 import type { ReactNode } from "react";
 
-/**
- * A single image in the viewer. Neutral replacement for app-specific item
- * types (e.g. `Panel` / `Organism`).
- *
- * `TData` is an optional per-slide payload (caption, credit, links, anything).
- * It travels with the item and is surfaced as `ctx.item.data` in every render
- * slot, so details stay paired with their image without a parallel lookup.
- */
-export interface ViewerItem<TData = unknown> {
+/** The fields every {@link ViewerItem} has, whatever its `data`. */
+export interface ViewerItemBase {
   id: string;
   /** FINAL url — the consumer resolves any base path before passing it in. */
   src: string;
@@ -22,6 +15,12 @@ export interface ViewerItem<TData = unknown> {
   srcSet?: string;
   /** `sizes` for the `srcSet` candidates, forwarded to `<img sizes>`. */
   sizes?: string;
+  /**
+   * A full-resolution url to show once the user zooms in (past 1.5×), fetched
+   * only then. Without it, a zoom picks a bigger `srcSet` candidate if there
+   * is one. Either way the swap happens after the new image has decoded.
+   */
+  zoomSrc?: string;
   alt?: string;
   /**
    * Optional low-resolution url for this image (e.g. the gallery tile's
@@ -32,9 +31,32 @@ export interface ViewerItem<TData = unknown> {
    * inside the origin element is used the same way, with no need to set this.
    */
   thumbnail?: string;
-  /** Arbitrary per-slide payload, surfaced as `ctx.item.data` in render slots. */
-  data?: TData;
+  /**
+   * Reserved for slide types other than images (video, say) in a later
+   * version. Leave it unset: a missing `kind` means `"image"`.
+   */
+  kind?: "image";
 }
+
+/**
+ * A single image in the viewer.
+ *
+ * `TData` types a per-slide payload (caption, credit, links, anything) on
+ * `data`. It travels with the item and is surfaced as `ctx.item.data` in every
+ * render slot, so details stay paired with their image without a parallel
+ * lookup. Name a `TData` and `data` is required (so `ctx.item.data` needs no
+ * `!`); leave it out, or include `undefined` in it, and `data` is optional.
+ */
+export type ViewerItem<TData = unknown> = ViewerItemBase &
+  (undefined extends TData
+    ? {
+        /** Per-slide payload, surfaced as `ctx.item.data` in render slots. */
+        data?: TData;
+      }
+    : {
+        /** Per-slide payload, surfaced as `ctx.item.data` in render slots. */
+        data: TData;
+      });
 
 /**
  * A rectangle in viewport coordinates. Structurally compatible with the
@@ -64,7 +86,9 @@ export type ViewerSlot =
   | "navEnd"
   | "overlay"
   | "hint"
-  | "spinner";
+  | "spinner"
+  | "error"
+  | "imageOverlay";
 
 /** Overridable control icons. Each is a React node rendered inside its button. */
 export interface ViewerIcons {
@@ -97,8 +121,20 @@ export interface ViewerContext<TData = unknown> {
   hasNext: boolean;
   goPrev: () => void;
   goNext: () => void;
+  /**
+   * Jump to any item. It plays like a step: `onNavigate` fires with the
+   * direction it lies in, then the image slides out and the target slides in
+   * (an instant cut under reduced motion). Drops any zoom first.
+   */
   goTo: (index: number) => void;
-  close: () => void;
+  /**
+   * Start the animated close. `then` runs once the viewer has stepped back off
+   * its `history` entry (at once without one); navigate from there rather
+   * than right after `close()`, or the viewer's entry is left on the stack
+   * behind your new URL and back needs an extra press. It runs as the close
+   * begins, not after the exit animation (that's `onClose`).
+   */
+  close: (then?: () => void) => void;
 
   isZoomed: boolean;
   displayScale: number;
@@ -108,23 +144,15 @@ export interface ViewerContext<TData = unknown> {
 
   isTouchDevice: boolean;
 
+  /** True while {@link ImageViewerProps.tapToToggleChrome} has hidden the bars. */
+  chromeHidden: boolean;
+
   /**
    * Measured bar heights so overlays (info drawers) can size themselves
    * between the bars.
    */
   topBarHeight: number;
   bottomBarHeight: number;
-
-  /**
-   * Lets an overlay push the image track up/down (drawer-open behavior).
-   * Prefer the declarative {@link ImageViewerProps.stageShift} prop; this
-   * imperative form overrides it while set to a non-null value.
-   * Pass a CSS transform string, or `null` to reset. `animate` defaults to
-   * `true`; pass `false` to apply the shift instantly with no transition — e.g.
-   * to snap the image back to center on navigation so it slides in horizontally
-   * instead of dropping down.
-   */
-  setContentShift: (transform: string | null, animate?: boolean) => void;
 }
 
 /**
@@ -147,6 +175,14 @@ export interface ViewerHistoryOptions<TData = unknown> {
    * leave the parameter off for an item that has no linkable value.
    */
   value?: (item: ViewerItem<TData>) => string | null;
+  /**
+   * How paging between items updates history. `"replace"` (default) keeps one
+   * entry, updated in place, so a single back press closes the viewer however
+   * far the user paged. `"push"` adds an entry per item, so back steps through
+   * the viewed items and closes from the one the viewer opened on (forward
+   * steps ahead again); closing from the UI still returns to the page in one go.
+   */
+  paging?: "replace" | "push";
 }
 
 export interface ImageViewerProps<TData = unknown> {
@@ -155,8 +191,8 @@ export interface ImageViewerProps<TData = unknown> {
   index: number;
   onIndexChange: (index: number) => void;
   /**
-   * Fired when a slide STARTS (button, key, or swipe), before the animation and
-   * the resulting `onIndexChange`. Lets overlays (e.g. an info drawer) animate
+   * Fired when a slide STARTS (button, key, swipe, or `ctx.goTo`), before the
+   * animation and the resulting `onIndexChange`. Lets overlays (e.g. an info drawer) animate
    * out in sync with the image. `direction` is the swipe direction.
    */
   onNavigate?: (direction: "prev" | "next") => void;
@@ -202,11 +238,12 @@ export interface ImageViewerProps<TData = unknown> {
 
   /**
    * Push the image stage out of view to make room for an overlay, e.g.
-   * `stageShift={drawerOpen ? "up" : null}`. Changes animate; a viewer that
-   * mounts already shifted starts in place with no slide. The declarative
-   * form of {@link ViewerContext.setContentShift}; when both are set, a
-   * non-null `setContentShift` wins. While shifted, the zoom controls hide and
-   * a close fades instead of collapsing into the thumbnail.
+   * `stageShift={drawerOpen ? "up" : null}`. Changes animate, with two
+   * exceptions that snap: a viewer that mounts already shifted starts in
+   * place, and a shift cleared as a slide starts (closing the drawer from
+   * `onNavigate`) returns to center at once, so the next image slides in
+   * level. While shifted, the zoom controls hide and a close fades instead of
+   * collapsing into the thumbnail.
    */
   stageShift?: ViewerStageShift;
 
@@ -254,6 +291,22 @@ export interface ImageViewerProps<TData = unknown> {
    * about the viewport center instead. Default `true`.
    */
   zoomToCursor?: boolean;
+  /**
+   * What the mouse wheel and trackpad scroll do.
+   * - `"pan"` (default): a trackpad pinch or Ctrl+wheel zooms; a plain wheel
+   *   or two-finger scroll pans a zoomed image and is left to the browser
+   *   otherwise, so a trackpad's two-finger swipe-back still works.
+   * - `"zoom"`: every wheel event zooms (the behavior before 1.0). Suits
+   *   mouse-wheel audiences; a trackpad scroll then zooms too.
+   */
+  wheel?: "pan" | "zoom";
+  /**
+   * A single tap or click on the image hides the bars, and another brings them
+   * back, for an unobstructed view. It waits out the double-tap window first,
+   * so double-tap zoom still works. `ctx.chromeHidden` reports the state.
+   * Default `false`.
+   */
+  tapToToggleChrome?: boolean;
   /** Show the `index / total` counter. Default `true`. */
   showCounter?: boolean;
   /**
@@ -275,9 +328,9 @@ export interface ImageViewerProps<TData = unknown> {
   /**
    * Close the viewer when the empty area around the image (the backdrop) is
    * clicked. Clicks on the image, the bars, and the control buttons are
-   * unaffected. Suspended while the stage is shifted ({@link ImageViewerProps.stageShift} or
-   * `ctx.setContentShift`), since the backdrop is then under an overlay rather
-   * than around the image. Default `false`.
+   * unaffected. Suspended while the stage is shifted
+   * ({@link ImageViewerProps.stageShift}), since the backdrop is then under an
+   * overlay rather than around the image. Default `false`.
    */
   closeOnBackdropClick?: boolean;
   /**
@@ -288,6 +341,13 @@ export interface ImageViewerProps<TData = unknown> {
    * pans), and is suspended while the stage is shifted. Default `true`.
    */
   swipeToClose?: boolean;
+  /**
+   * How many images on each side of the active one to fetch and decode in the
+   * background, so navigating to them doesn't wait on the network. Follows
+   * `loop`. Default `1`, or `0` when the browser reports Save-Data; an explicit
+   * value always wins.
+   */
+  preloadCount?: number;
 
   // Slots (all receive ViewerContext)
   /** Top-left title area. */
@@ -360,12 +420,27 @@ export interface ImageViewerProps<TData = unknown> {
    * dead space the way {@link renderOverlay} would. The wrapper is
    * `position: relative; overflow: hidden`; position children against it.
    * Non-interactive by default (the wrapper owns the image tap); set
-   * `pointer-events: auto` on a child that needs clicks. Gate visibility on
-   * `ctx.isZoomed` yourself if the badge should hide while zoomed.
+   * `pointer-events: auto` on a child that needs clicks. The content fades in
+   * with the bars as the viewer opens, out as soon as a close begins, and
+   * quickly on each new slide (it remounts per slide); gate on `ctx.isZoomed`
+   * yourself if it should also hide while zoomed.
    */
   renderImageOverlay?: (ctx: ViewerContext<TData>) => ReactNode;
+  /**
+   * What to show, centered on the stage, when the active image fails to load.
+   * `retry` reloads it. Default: "Couldn't load image" and a Retry button.
+   * Return `null` to show nothing. Rendered inside `.rvl-error` (role `alert`;
+   * target it with `classNames.error`), which keeps taps from reaching the
+   * backdrop. Zoom is off while the error shows.
+   */
+  renderError?: (ctx: ViewerContext<TData>, retry: () => void) => ReactNode;
 
   // Theming / a11y
+  /**
+   * Accent color (any CSS color) for the viewer's active and focus states.
+   * Sets `--rvl-accent` on the viewer, so it wins over one set on an ancestor.
+   */
+  accent?: string;
   classNames?: Partial<Record<ViewerSlot, string>>;
   icons?: Partial<ViewerIcons>;
   ariaLabel?: string;

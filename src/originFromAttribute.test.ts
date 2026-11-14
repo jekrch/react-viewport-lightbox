@@ -6,7 +6,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-const item = (id: string, data?: { slug: string }): ViewerItem<{ slug: string }> => ({
+const item = (id: string, data = { slug: id }): ViewerItem<{ slug: string }> => ({
   id,
   src: `/${id}.jpg`,
   data,
@@ -44,7 +44,7 @@ describe("originFromAttribute", () => {
     container.appendChild(inside);
 
     const lookup = originFromAttribute<{ slug: string }>("data-slug", {
-      value: (it) => it.data!.slug,
+      value: (it) => it.data.slug,
       root: () => container,
     });
     expect(lookup(0, item("x", { slug: "fern" }))).toBe(inside);

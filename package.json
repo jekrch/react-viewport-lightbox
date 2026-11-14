@@ -1,6 +1,6 @@
 {
   "name": "@jekrch/react-viewport-lightbox",
-  "version": "0.10.1",
+  "version": "1.0.0",
   "description": "A headless-capable, touch-friendly React image viewer and lightbox with zoom, pan, and swipe.",
   "type": "module",
   "sideEffects": [
@@ -11,24 +11,51 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     },
-    "./styles.css": "./dist/styles.css"
+    "./lazy": {
+      "import": {
+        "types": "./dist/lazy.d.ts",
+        "default": "./dist/lazy.js"
+      },
+      "require": {
+        "types": "./dist/lazy.d.cts",
+        "default": "./dist/lazy.cjs"
+      }
+    },
+    "./styles.css": "./dist/styles.css",
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "lazy": [
+        "./dist/lazy.d.ts"
+      ]
+    }
   },
   "files": [
-    "dist"
+    "dist",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
     "build": "tsup",
     "size": "node scripts/check-size.mjs",
+    "bench": "node scripts/bench.mjs",
+    "check:package": "publint && attw --pack . --exclude-entrypoints styles.css",
     "check:consumers": "scripts/check-consumers.sh",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -41,21 +68,26 @@
     "react-dom": ">=18"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
     "@changesets/cli": "^2.27.0",
     "@eslint/js": "^9.0.0",
+    "@playwright/test": "1.61.1",
     "@testing-library/jest-dom": "^6.4.0",
-    "@types/node": "^22.0.0",
     "@testing-library/react": "^16.0.0",
+    "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "@vitejs/plugin-react": "^6.3.0",
     "@vitest/coverage-v8": "^5.1.0",
+    "esbuild": "^0.28.2",
     "eslint": "^9.0.0",
     "eslint-plugin-react-hooks": "^5.0.0",
     "jsdom": "^25.0.0",
+    "playwright-core": "1.61.1",
     "prettier": "^3.3.0",
+    "publint": "^0.3.25",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tsup": "^9.0.0",
