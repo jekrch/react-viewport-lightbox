@@ -1181,7 +1181,7 @@ export function ImageViewer<TData = unknown>({
             <img
               ref={imgRef}
               // A retry remounts the element so the browser fetches again.
-              key={retryKey}
+              key={`img-${retryKey}`}
               // While a placeholder stands in (thumbnail-first open), it's the
               // whole source: a srcset would outrank it. The full image swaps
               // in, already decoded, once ready (see useSharedElementZoom).
@@ -1216,7 +1216,7 @@ export function ImageViewer<TData = unknown>({
             />
             {imageOverlay != null && (
               <div
-                key={index}
+                key={`overlay-${index}`}
                 className={cx(
                   "rvl-image-overlay",
                   imageOverlayShown && "rvl-image-overlay-shown",

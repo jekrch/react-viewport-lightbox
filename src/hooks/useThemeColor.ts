@@ -179,6 +179,8 @@ export function useThemeColor(isActive: boolean, closing = false): void {
         // overlay has opened (it nudges for itself).
         const closedAtY = window.scrollY;
         setTimeout(() => {
+          // The window can be gone by now (a torn-down test environment).
+          if (typeof window === "undefined") return;
           if (activeCount === 0 && Math.abs(window.scrollY - closedAtY) < 1)
             nudgeSafariResample(() => activeCount === 0);
         }, CLOSE_RESAMPLE_MS);

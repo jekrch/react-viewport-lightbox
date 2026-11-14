@@ -48,7 +48,7 @@
     "build": "tsup",
     "size": "node scripts/check-size.mjs",
     "bench": "node scripts/bench.mjs",
-    "check:package": "publint && attw --pack . --exclude-entrypoints styles.css",
+    "check:package": "publint --pack npm && attw --pack . --exclude-entrypoints styles.css",
     "check:consumers": "scripts/check-consumers.sh",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
