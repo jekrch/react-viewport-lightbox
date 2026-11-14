@@ -3,6 +3,10 @@
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 
+## v0.10.1
+
+- **No page shift with `scrollbar-gutter: stable`** — on a scrolled page, opening the viewer no longer narrows the page by a scrollbar's width (and the overlay no longer widens at close). Chrome's root `clientWidth` grows under a reserved gutter once the scrollbar hides; the lock now measures the root's laid-out width instead.
+
 ## v0.10.0
 
 - **Swipe to close** — drag the image up or down to dismiss; opt out with `swipeToClose={false}`.

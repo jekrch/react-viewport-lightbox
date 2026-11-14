@@ -1190,10 +1190,20 @@ describe("<ImageViewer> scrollbar compensation", () => {
   /** A 15px classic root scrollbar that the scroll lock's `overflow: hidden` removes. */
   function fakeScrollbar(): () => void {
     const root = document.documentElement;
-    Object.defineProperty(root, "clientWidth", {
-      configurable: true,
-      get: () => (document.body.style.overflow === "hidden" ? 1000 : 985),
-    });
+    const width = () => (document.body.style.overflow === "hidden" ? 1000 : 985);
+    Object.defineProperty(root, "clientWidth", { configurable: true, get: width });
+    const rect = root.getBoundingClientRect;
+    root.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: width(),
+        bottom: 0,
+        width: width(),
+        height: 0,
+      }) as DOMRect;
     const innerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
@@ -1202,6 +1212,7 @@ describe("<ImageViewer> scrollbar compensation", () => {
     });
     return () => {
       delete (root as { clientWidth?: number }).clientWidth;
+      root.getBoundingClientRect = rect;
       Object.defineProperty(window, "innerWidth", {
         configurable: true,
         writable: true,

@@ -9,16 +9,26 @@ import {
 /**
  * Fakes a classic (space-taking) root scrollbar of `width` px that the lock's
  * `overflow: hidden` removes — unless `keepsSpace` (a stable gutter, or a
- * forced `overflow-y: scroll` on the root), where the viewport never widens.
+ * forced `overflow-y: scroll` on the root), where the page never widens.
+ *
+ * Models Chrome: the root's `clientWidth` grows once the scrollbar is hidden
+ * EVEN under a stable gutter (`clientWidthGrows`, the default for a gutter),
+ * while its laid-out width (`getBoundingClientRect`) only grows when the space
+ * is really given back.
  */
-function withScrollbar(width: number, keepsSpace = false): () => void {
+function withScrollbar(width: number, keepsSpace = false, clientWidthGrows = true): () => void {
   const root = document.documentElement;
   const viewport = 1000;
+  const hidden = () => document.body.style.overflow === "hidden";
   Object.defineProperty(root, "clientWidth", {
     configurable: true,
-    get: () =>
-      !keepsSpace && document.body.style.overflow === "hidden" ? viewport : viewport - width,
+    get: () => (hidden() && (!keepsSpace || clientWidthGrows) ? viewport : viewport - width),
   });
+  const rect = root.getBoundingClientRect;
+  root.getBoundingClientRect = () => {
+    const w = !keepsSpace && hidden() ? viewport : viewport - width;
+    return { x: 0, y: 0, top: 0, left: 0, right: w, bottom: 0, width: w, height: 0 } as DOMRect;
+  };
   Object.defineProperty(window, "innerWidth", {
     configurable: true,
     writable: true,
@@ -26,6 +36,7 @@ function withScrollbar(width: number, keepsSpace = false): () => void {
   });
   return () => {
     delete (root as { clientWidth?: number }).clientWidth;
+    root.getBoundingClientRect = rect;
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       writable: true,
@@ -110,6 +121,33 @@ describe("useBodyScrollLock", () => {
       expect(document.body.style.right).toBe("0px");
       expect(document.documentElement.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("0px");
       expect(getScrollLockCompensation()).toBe(0);
+      unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("ignores Chrome's grown clientWidth under a stable gutter", () => {
+    // Regression: with `scrollbar-gutter: stable` the root's clientWidth jumps
+    // by the scrollbar width once overflow is hidden, but the gutter stays
+    // reserved. Compensating for it narrowed the body and shifted the page left.
+    const restore = withScrollbar(15, true, true);
+    try {
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(document.body.style.right).toBe("0px");
+      expect(getScrollLockCompensation()).toBe(0);
+      unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("keeps a fractional scrollbar width unrounded", () => {
+    // A browser zoom gives the scrollbar a fractional width.
+    const restore = withScrollbar(15.5);
+    try {
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(document.body.style.right).toBe("15.5px");
       unmount();
     } finally {
       restore();

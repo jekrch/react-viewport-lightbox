@@ -42,12 +42,17 @@ import { useLayoutEffect } from "react";
  * reason to touch its chrome. The body's `overflow: hidden` still propagates to
  * the viewport, so that retained range can't be scrolled by the user.
  *
- * The compensation is measured, not assumed: the root's width is read before
- * and after the lock hides the scrollbar, and the body is offset by exactly
- * what the viewport gained. So a root that keeps its scrollbar space anyway —
- * `scrollbar-gutter: stable`, or `overflow-y: scroll` on `<html>` (which the
+ * The compensation is measured, not assumed: the root's laid-out width is read
+ * before and after the lock hides the scrollbar, and the body is offset by
+ * exactly what the page gained. So a root that keeps its scrollbar space anyway
+ * — `scrollbar-gutter: stable`, or `overflow-y: scroll` on `<html>` (which the
  * body's `overflow` can't override) — gets no offset, where adding one would
- * itself shift the page. The measurement forces a layout, so it only runs when
+ * itself shift the page. That width is the root's border box
+ * (`getBoundingClientRect`), not its `clientWidth`: with a stable gutter,
+ * Chrome's root `clientWidth` grows by the scrollbar's width once the
+ * scrollbar is hidden even though the gutter stays reserved and nothing
+ * widens, so trusting it narrowed the pinned body by a phantom scrollbar and
+ * shifted the page left. The measurement forces a layout, so it only runs when
  * the root has a space-taking scrollbar to begin with (`innerWidth` exceeds the
  * root's `clientWidth`) — never on touch devices or overlay-scrollbar desktops,
  * whose open path stays a single layout.
@@ -96,8 +101,9 @@ export function useBodyScrollLock(isLocked: boolean): void {
 
     if (lockCount === 0) {
       const root = document.documentElement;
-      const widthBefore = root.clientWidth;
-      const hasScrollbar = window.innerWidth > widthBefore;
+      const hasScrollbar = window.innerWidth > root.clientWidth;
+      // Laid-out width, not clientWidth (see above). Only read when it's used.
+      const widthBefore = hasScrollbar ? root.getBoundingClientRect().width : 0;
       lockedScrollY = window.scrollY;
       // Read before the body is pinned, while it still has its real height.
       const scrollHeight = root.scrollHeight;
@@ -118,7 +124,10 @@ export function useBodyScrollLock(isLocked: boolean): void {
       document.body.style.left = "0px";
       document.body.style.right = "0px";
       // How much wider the viewport got from hiding the scrollbar (see above).
-      compensation = hasScrollbar ? Math.max(0, root.clientWidth - widthBefore) : 0;
+      // Unrounded: at a browser zoom the scrollbar is a fractional width. Under
+      // half a pixel is layout noise, not a scrollbar.
+      const gained = hasScrollbar ? root.getBoundingClientRect().width - widthBefore : 0;
+      compensation = gained >= 0.5 ? gained : 0;
       if (compensation > 0) document.body.style.right = `${compensation}px`;
       root.style.setProperty(SCROLLBAR_WIDTH_VAR, `${compensation}px`);
       // Hold the scroll range the pinned body just vacated (see above).
