@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useEffect, useRef, useState, type RefObject } from "react";
-import type { ViewerRect } from "../types";
+import type { ViewerItem, ViewerRect } from "../types";
 import {
   coverRect,
   cropFadeProgress,
@@ -181,8 +181,54 @@ function isRectInViewport(rect: ViewerRect): boolean {
   );
 }
 
+/** Two rects differ by more than a pixel on any edge. */
+function rectsDiffer(a: ViewerRect, b: ViewerRect): boolean {
+  return (
+    Math.abs(a.left - b.left) > 1 ||
+    Math.abs(a.top - b.top) > 1 ||
+    Math.abs(a.width - b.width) > 1 ||
+    Math.abs(a.height - b.height) > 1
+  );
+}
+
+function sameUrl(a: string, b: string): boolean {
+  if (a === b) return true;
+  try {
+    return new URL(a, document.baseURI).href === new URL(b, document.baseURI).href;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A low-res source that can stand in for the opening image while its full
+ * source loads: the origin element's own `<img>` when it has already loaded
+ * (it's on screen, so it's decoded and costs nothing), else the item's
+ * `thumbnail`. Null when there's nothing, or when it IS the full source (a
+ * gallery that tiles with its full images gains nothing from a swap).
+ */
+function resolvePlaceholder(
+  getOrigin: SharedElementZoomArgs["getOrigin"],
+  index: number,
+  item: ViewerItem | undefined,
+): string | null {
+  if (typeof window === "undefined" || !item) return null;
+  let src: string | null = null;
+  const origin = getOrigin?.(index, item);
+  if (origin && typeof (origin as HTMLElement).getBoundingClientRect === "function") {
+    const el = origin as HTMLElement;
+    const img = el instanceof HTMLImageElement ? el : el.querySelector("img");
+    if (img && img.complete && img.naturalWidth > 0) src = img.currentSrc || img.src || null;
+  }
+  if (!src && item.thumbnail) src = item.thumbnail;
+  if (!src || sameUrl(src, item.src)) return null;
+  return src;
+}
+
 export interface SharedElementZoomArgs {
-  getOrigin?: (index: number) => HTMLElement | ViewerRect | null;
+  getOrigin?: (index: number, item: ViewerItem) => HTMLElement | ViewerRect | null;
+  /** The active item; its `thumbnail` (or the origin's loaded `<img>`) seeds the placeholder. */
+  item: ViewerItem | undefined;
   /** Honor a source element's `object-fit: cover` crop. Default `true`. */
   crop?: boolean;
   index: number;
@@ -198,11 +244,25 @@ export interface SharedElementZoomArgs {
 export interface SharedElementZoomState {
   /** True when the open should hold the image hidden until it decodes, then play the zoom. */
   gateEntry: boolean;
+  /**
+   * The gated entry is over: its zoom finished (or was settled early), or it
+   * turned out it couldn't play (no origin, image off screen). Only meaningful
+   * when {@link gateEntry} is true.
+   */
+  entrySettled: boolean;
+  /**
+   * Low-res stand-in to render as the active image's `src` (with no
+   * `srcSet`/`sizes`) while the full image loads; null once swapped, after
+   * navigating away from the opening item, or when there is none.
+   */
+  placeholderSrc: string | null;
+  /** Keep the active image at opacity 0 for now (it isn't ready to be seen). */
+  holdHidden: boolean;
   /** True when a shared-element (thumbnail) zoom is configured at all. */
   zoomTransition: boolean;
   /** Whether the opening image has finished loading + decoding. */
   fullLoaded: boolean;
-  /** True once the load runs long enough to warrant a spinner. */
+  /** True once a load (the gated image, or the full image behind a placeholder) runs long. */
   showSpinner: boolean;
   /** True only while a close-collapse FLIP is animating the image back into its source. */
   collapsing: boolean;
@@ -212,8 +272,11 @@ export interface SharedElementZoomState {
   onImageError: () => void;
   /** Settle an in-flight entry zoom to its resting pose (call before measuring a close). */
   settleEntry: () => void;
-  /** Play the collapse-into-thumbnail FLIP on close, when one applies. No-op otherwise. */
-  playCollapse: () => void;
+  /**
+   * Play the collapse-into-thumbnail FLIP on close, when one applies. Returns
+   * true when it played, false when the close falls back to a plain fade.
+   */
+  playCollapse: () => boolean;
 }
 
 /**
@@ -232,6 +295,7 @@ export interface SharedElementZoomState {
  */
 export function useSharedElementZoom({
   getOrigin,
+  item,
   crop = true,
   index,
   isZoomed,
@@ -259,21 +323,111 @@ export function useSharedElementZoom({
   // track fades out instead of vanishing on unmount.
   const [collapsing, setCollapsing] = useState(false);
 
+  // Thumbnail-first open. The opening item shows a low-res stand-in (see
+  // resolvePlaceholder) the moment it mounts, sized to the box the full image
+  // will rest in, so the entry zoom plays at once instead of waiting on the
+  // network. The full image is fetched + decoded off-DOM meanwhile, then
+  // swapped into the same <img> (decoded, so the swap is atomic). Resolved in
+  // the initializer so the very first render already uses it: the full src
+  // never starts loading into the element only to be replaced.
+  const openIndexRef = useRef(index);
+  const [placeholderState, setPlaceholderState] = useState<string | null>(() =>
+    resolvePlaceholder(getOrigin, index, item),
+  );
+  const placeholderSrc = index === openIndexRef.current ? placeholderState : null;
+  const placeholderRef = useRef(placeholderSrc);
+  useLayoutEffect(() => {
+    placeholderRef.current = placeholderSrc;
+  });
+  // The full image (behind a placeholder) has decoded and can be swapped in.
+  const [fullReady, setFullReady] = useState(false);
+  // The <img> carries explicit px width/height sized from the placeholder.
+  const sizedRef = useRef(false);
+  // A size release that arrived mid-entry-zoom, to run when the flight ends.
+  const releaseAfterEntryRef = useRef(false);
+
   const entryStartedRef = useRef(false);
+  const [entrySettled, setEntrySettled] = useState(false);
   // Tears down the in-flight entry zoom (clears the inline transform, restores
   // the wrapper clip, cancels the animation). Set while the zoom is playing so
   // a close mid-flight can settle the image before measuring its collapse.
   const entryCleanupRef = useRef<(() => void) | null>(null);
+
+  // The CSS caps the image at (max-width, max-height); a placeholder is smaller
+  // than the full image, so left to its natural size it would rest small and
+  // then jump on the swap. Pin the box the full image will fill instead: the
+  // placeholder's aspect, scaled to fit the caps. That assumes the full image is
+  // at least as large as that box (true for photos); one that's smaller is
+  // corrected, with a short glide, when its own load releases the pin.
+  const sizeToPlaceholder = useCallback(
+    (img: HTMLImageElement) => {
+      const { naturalWidth: nw, naturalHeight: nh } = img;
+      if (!nw || !nh) return;
+      // Lock to the final constrained height, as runZoomEntry does (the bottom
+      // bar may not be measured into React state yet on the opening frame).
+      const bottomH = bottomBarRef.current?.offsetHeight ?? 0;
+      img.style.maxHeight = `calc(${viewportH} - ${bottomH + IMG_PADDING * 2}px)`;
+      const cs = getComputedStyle(img);
+      const px = (v: string, fallback: number) =>
+        v.endsWith("px") && Number.isFinite(parseFloat(v)) ? parseFloat(v) : fallback;
+      const maxW = px(cs.maxWidth, window.innerWidth);
+      const maxH = px(cs.maxHeight, window.innerHeight);
+      const scale = Math.min(maxW / nw, maxH / nh);
+      img.style.width = `${nw * scale}px`;
+      img.style.height = `${nh * scale}px`;
+      sizedRef.current = true;
+    },
+    [bottomBarRef, viewportH],
+  );
+
+  // Drop the placeholder-derived size pin once the full image is in, letting it
+  // take its own size. Deferred while the entry zoom is in flight (resizing the
+  // element under a running FLIP would jolt it); otherwise any change glides.
+  const releaseSize = useCallback(() => {
+    const img = imgRef.current;
+    if (!img || !sizedRef.current) return;
+    if (entryCleanupRef.current) {
+      releaseAfterEntryRef.current = true;
+      return;
+    }
+    sizedRef.current = false;
+    const before = img.getBoundingClientRect();
+    img.style.width = "";
+    img.style.height = "";
+    const after = img.getBoundingClientRect();
+    if (!isZoomed && !prefersReducedMotion() && canAnimate(img) && after.width && after.height) {
+      if (rectsDiffer(before, after)) {
+        img.animate(
+          [
+            { transformOrigin: "top left", transform: flipTransform(after, before) },
+            { transformOrigin: "top left", transform: "none" },
+          ],
+          { duration: ANIM_MS, easing: ZOOM_EASE },
+        );
+      }
+    }
+    measureBaseDims();
+  }, [imgRef, isZoomed, measureBaseDims]);
+  const releaseSizeRef = useRef(releaseSize);
+  useLayoutEffect(() => {
+    releaseSizeRef.current = releaseSize;
+  });
 
   // Plays the shared-element zoom once, from the source thumbnail to the resting
   // image box. Only ever invoked after the full image has decoded (see below),
   // so the picture is paint-ready and the zoom can't flash a full-size frame.
   const runZoomEntry = useCallback(() => {
     if (entryStartedRef.current) return;
-    if (!getOrigin || prefersReducedMotion()) return;
+    if (!getOrigin || prefersReducedMotion() || !item) {
+      setEntrySettled(true);
+      return;
+    }
     const img = imgRef.current;
-    const origin = resolveOrigin(getOrigin(index), crop);
-    if (!origin || !canAnimate(img)) return;
+    const origin = resolveOrigin(getOrigin(index, item), crop);
+    if (!origin || !canAnimate(img)) {
+      setEntrySettled(true);
+      return;
+    }
     const thumb = origin.rect;
 
     // Pin the image to its final constrained height before measuring. The bottom
@@ -288,8 +442,11 @@ export function useSharedElementZoom({
     img.style.maxHeight = lockedMaxHeight;
 
     const imgRect = img.getBoundingClientRect();
-    if (imgRect.width === 0 || imgRect.height === 0) {
+    // A zero box can't be flown, and an image off screen (the stage pushed out
+    // of view by a shifted-open overlay) has nowhere visible to fly to.
+    if (imgRect.width === 0 || imgRect.height === 0 || !isRectInViewport(imgRect)) {
       img.style.maxHeight = "";
+      setEntrySettled(true);
       return;
     }
     entryStartedRef.current = true;
@@ -359,17 +516,29 @@ export function useSharedElementZoom({
       img.style.maskImage = "";
       img.style.webkitMaskImage = "";
       entryCleanupRef.current = null;
+      setEntrySettled(true);
+      if (releaseAfterEntryRef.current) {
+        releaseAfterEntryRef.current = false;
+        releaseSizeRef.current();
+      }
     };
     entryCleanupRef.current = cleanup;
     anim.onfinish = cleanup;
-  }, [getOrigin, index, crop, imgRef, imgWrapperRef, bottomBarRef, viewportH]);
+  }, [getOrigin, index, item, crop, imgRef, imgWrapperRef, bottomBarRef, viewportH]);
 
   // Mark the opening image ready once it has both loaded and decoded. `decode()`
   // forces the decode up front so revealing the image can't flash; fall back to
   // a plain reveal where it's unsupported or rejects (e.g. the src changed).
   const onImageLoad = useCallback(() => {
-    measureBaseDims();
     const img = imgRef.current;
+    // The placeholder's first load sizes the box; the full image's load (after
+    // the swap) releases that pin.
+    if (img && placeholderRef.current) {
+      if (!sizedRef.current) sizeToPlaceholder(img);
+    } else if (sizedRef.current) {
+      releaseSize();
+    }
+    measureBaseDims();
     if (img && typeof img.decode === "function") {
       img.decode().then(
         () => setFullLoaded(true),
@@ -378,11 +547,68 @@ export function useSharedElementZoom({
     } else {
       setFullLoaded(true);
     }
-  }, [measureBaseDims, imgRef]);
+  }, [measureBaseDims, imgRef, sizeToPlaceholder, releaseSize]);
 
   // Don't strand the open on a broken image: reveal it (skipping the zoom) so
-  // the spinner clears and the viewer stays usable.
-  const onImageError = useCallback(() => setFullLoaded(true), []);
+  // the spinner clears and the viewer stays usable. A placeholder that fails is
+  // just dropped, and the full image loads in its place.
+  const onImageError = useCallback(() => {
+    if (placeholderRef.current) {
+      setPlaceholderState(null);
+      return;
+    }
+    setFullLoaded(true);
+  }, []);
+
+  // Fetch + decode the full opening image off-DOM while the placeholder shows.
+  // Mirrors srcset/sizes so the browser picks the same candidate the <img> will.
+  // Mount-only: the placeholder belongs to the opening item.
+  useEffect(() => {
+    if (!placeholderState || !item) return;
+    const full = new Image();
+    if (item.srcSet) {
+      full.srcset = item.srcSet;
+      if (item.sizes) full.sizes = item.sizes;
+    }
+    full.src = item.src;
+    let cancelled = false;
+    const done = () => {
+      if (!cancelled) setFullReady(true);
+    };
+    if (typeof full.decode === "function") {
+      full.decode().then(done, done);
+    } else {
+      full.onload = done;
+      full.onerror = done;
+    }
+    return () => {
+      cancelled = true;
+      full.onload = null;
+      full.onerror = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Swap the full image in as soon as it's decoded.
+  useEffect(() => {
+    if (fullReady && placeholderState) setPlaceholderState(null);
+  }, [fullReady, placeholderState]);
+
+  // Navigating off the opening item drops its placeholder (see `placeholderSrc`)
+  // and must drop the size pin with it, before the next item paints.
+  useLayoutEffect(() => {
+    if (index === openIndexRef.current) return;
+    // For good: coming back to the opening item shows its full image.
+    openIndexRef.current = -1;
+    setPlaceholderState(null);
+    const img = imgRef.current;
+    if (img && sizedRef.current) {
+      sizedRef.current = false;
+      releaseAfterEntryRef.current = false;
+      img.style.width = "";
+      img.style.height = "";
+    }
+  }, [index, imgRef]);
 
   // A cached image can already be `complete` before React wires up onLoad; pick
   // it up on mount so the open isn't stuck waiting for an event that won't fire.
@@ -400,36 +626,78 @@ export function useSharedElementZoom({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fullLoaded]);
 
+  // Hidden until there's something decoded to show: the gated thumbnail zoom
+  // (which flies in once ready), or a placeholder that hasn't sized yet.
+  const holdHidden = (gateEntry || !!placeholderSrc) && !fullLoaded;
+  // Waiting on the network: the opening image hasn't loaded (on any open path,
+  // with or without getOrigin — a plain deep-linked open of a large image is
+  // just as slow), or a placeholder is showing and the full image is still on
+  // its way. `holdHidden` implies `!fullLoaded`.
+  const waiting = !fullLoaded || (!!placeholderSrc && !fullReady);
+
   // Reveal the spinner only after the wait crosses 500ms, then clear it the
-  // moment the image is ready (or the gate no longer applies).
+  // moment the wait ends.
   useEffect(() => {
-    if (!gateEntry || fullLoaded) {
+    if (!waiting) {
       setShowSpinner(false);
       return;
     }
     const t = setTimeout(() => setShowSpinner(true), 500);
     return () => clearTimeout(t);
-  }, [gateEntry, fullLoaded]);
+  }, [waiting]);
 
   const settleEntry = useCallback(() => {
     entryCleanupRef.current?.();
   }, []);
 
-  const playCollapse = useCallback(() => {
+  const playCollapse = useCallback((): boolean => {
     const reduce = prefersReducedMotion();
     // Collapse back into the source thumbnail when one exists, is still on
     // screen, and the image isn't zoomed (a zoomed image's box no longer
     // matches the thumbnail; an off-screen thumbnail would fly to nowhere, so
     // fall back to the plain fade).
-    const origin = !reduce && !isZoomed ? resolveOrigin(getOrigin?.(index), crop) : null;
+    const origin =
+      !reduce && !isZoomed && item ? resolveOrigin(getOrigin?.(index, item), crop) : null;
     const thumb = origin && isRectInViewport(origin.rect) ? origin.rect : null;
     const img = imgRef.current;
-    if (!thumb || !canAnimate(img)) return;
+    if (!origin || !thumb || !canAnimate(img)) return false;
 
-    const imgRect = img.getBoundingClientRect();
+    const visual = img.getBoundingClientRect();
+    // The image itself must be on screen too: with the stage pushed out of view
+    // (a drawer open), a collapse would fly it in from off-screen. Fade instead.
+    if (!isRectInViewport(visual) || !visual.width || !visual.height) return false;
+
+    // A swipe-to-close leaves the wrapper carrying its drag pose (a translate
+    // plus a uniform scale), and the image's own animation plays INSIDE that
+    // transform. Map every target through it: measure the image's untransformed
+    // box, derive the pose from the two rects, and express the thumbnail in the
+    // wrapper's local space. With no carried transform this is the identity.
+    const wrapper = imgWrapperRef.current;
+    let rest = visual;
+    let toLocal = (r: ViewerRect): ViewerRect => r;
+    const carried = wrapper?.style.transform;
+    if (wrapper && carried && carried !== "none") {
+      wrapper.style.transform = "none";
+      rest = img.getBoundingClientRect();
+      wrapper.style.transform = carried;
+      const s = visual.width / rest.width || 1;
+      toLocal = (r) => ({
+        left: rest.left + (r.left - visual.left) / s,
+        top: rest.top + (r.top - visual.top) / s,
+        width: r.width / s,
+        height: r.height / s,
+      });
+    }
+    const poseScale = visual.width / rest.width || 1;
+    const target = toLocal(thumb);
+    const localOrigin: ResolvedOrigin = {
+      ...origin,
+      rect: toLocal(origin.rect),
+      clip: origin.clip && toLocal(origin.clip),
+    };
+
     // Lift the wrapper clip so the image isn't sliced as it flies back to the
     // thumbnail; the component unmounts at onClose, so no restore is needed.
-    const wrapper = imgWrapperRef.current;
     if (wrapper) wrapper.style.overflow = "visible";
     setCollapsing(true);
     // Morph the corners from the image's own resting radius into the thumbnail's
@@ -437,11 +705,12 @@ export function useSharedElementZoom({
     // as the image shrinks (the FLIP scales border-radius down with it) and
     // snapping back on hand-off. When the origin is an element we land exactly on
     // the thumbnail's real radius; otherwise we hold the image's own. The
-    // thumbnail-pose keyframe is scale-compensated so it renders at the target.
+    // thumbnail-pose keyframe is scale-compensated (for the carried pose too) so
+    // it renders at the target.
     const restRadius = parseFloat(getComputedStyle(img).borderRadius) || 0;
-    const thumbRadius = origin!.radius ?? restRadius;
-    const sx = thumb.width / imgRect.width;
-    const sy = thumb.height / imgRect.height;
+    const thumbRadius = origin.radius ?? restRadius;
+    const sx = (target.width / rest.width) * poseScale;
+    const sy = (target.height / rest.height) * poseScale;
     const rounds = restRadius || thumbRadius;
     const radiusFrom = rounds ? { borderRadius: `${restRadius}px` } : {};
     const radiusTo = rounds ? { borderRadius: scaledRadius(thumbRadius, sx, sy) } : {};
@@ -449,18 +718,22 @@ export function useSharedElementZoom({
     img.animate(
       [
         { transformOrigin: "top left", transform: "none", ...radiusFrom },
-        { transformOrigin: "top left", transform: flipTransform(imgRect, thumb), ...radiusTo },
+        { transformOrigin: "top left", transform: flipTransform(rest, target), ...radiusTo },
       ],
       { duration: ANIM_MS, easing: ZOOM_EASE, fill: "forwards" },
     );
     // Where the thumbnail crops, take the parts it has no room for down to
     // nothing on the way, so there is nothing left to blink out when the viewer
     // unmounts on top of the landed image.
-    playCropFade(img, imgRect, origin!, "collapse");
-  }, [getOrigin, index, isZoomed, crop, imgRef, imgWrapperRef]);
+    playCropFade(img, rest, localOrigin, "collapse");
+    return true;
+  }, [getOrigin, index, item, isZoomed, crop, imgRef, imgWrapperRef]);
 
   return {
     gateEntry,
+    entrySettled,
+    placeholderSrc,
+    holdHidden,
     zoomTransition,
     fullLoaded,
     showSpinner,

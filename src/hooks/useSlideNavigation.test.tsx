@@ -98,6 +98,51 @@ describe("useSlideNavigation", () => {
     raf.mockRestore();
   });
 
+  describe("with prefers-reduced-motion", () => {
+    beforeEach(() => {
+      vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("commits without a glide and navigates without waiting on a transition", async () => {
+      const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+      // jsdom's Image has no decode(); the commit preloads through it.
+      vi.stubGlobal(
+        "Image",
+        class {
+          src = "";
+          decode() {
+            return Promise.resolve();
+          }
+        },
+      );
+      const { result, onNavigate } = setup();
+      act(() => result.current.commitSlide("next"));
+      expect(result.current.slideTrackRef.current!.style.transition).toBe("none");
+      // The completion runs on the next tick (no transition fallback wait),
+      // then hands off once the preload decode settles.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(onNavigate).toHaveBeenCalledWith(2);
+      raf.mockRestore();
+    });
+
+    it("snaps back instantly", () => {
+      const { result } = setup();
+      act(() => result.current.applySlideOffset(80));
+      act(() => result.current.snapBack());
+      expect(result.current.slideTrackRef.current!.style.transition).toBe("none");
+      act(() => vi.advanceTimersByTime(0));
+      expect(result.current.slideActive).toBe(false);
+    });
+  });
+
   it("freezes the slide distance during a commit so a late neighbor onLoad can't snap the landing", () => {
     const { result } = setup();
     // Commit locks the track's travel distance imperatively.

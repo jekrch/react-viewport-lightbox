@@ -11,6 +11,7 @@ afterEach(() => {
   document.querySelectorAll('meta[name="theme-color"]').forEach((el) => el.remove());
   document.documentElement.style.removeProperty("--rvl-theme-color");
   document.documentElement.style.removeProperty("background-color");
+  document.documentElement.style.removeProperty("--rvl-backdrop-in");
 });
 
 describe("useThemeColor", () => {
@@ -77,6 +78,53 @@ describe("useThemeColor", () => {
     expect(document.documentElement.style.backgroundColor).toBe("rgb(10, 20, 30)");
   });
 
+  it("hands the root background back at close start, keeping the meta until unmount", () => {
+    vi.useFakeTimers();
+    document.documentElement.style.backgroundColor = "rgb(10, 20, 30)";
+
+    const { rerender, unmount } = renderHook(({ closing }) => useThemeColor(true, closing), {
+      initialProps: { closing: false },
+    });
+    vi.advanceTimersByTime(400);
+    expect(document.documentElement.style.backgroundColor).not.toBe("rgb(10, 20, 30)");
+
+    rerender({ closing: true });
+    expect(document.documentElement.style.backgroundColor).toBe("rgb(10, 20, 30)");
+    expect(themeMeta()).not.toBeNull();
+
+    unmount();
+    expect(document.documentElement.style.backgroundColor).toBe("rgb(10, 20, 30)");
+    expect(themeMeta()).toBeNull();
+  });
+
+  it("never swaps the background for a close that starts mid-fade-in", () => {
+    vi.useFakeTimers();
+    document.documentElement.style.backgroundColor = "rgb(10, 20, 30)";
+
+    const { rerender } = renderHook(({ closing }) => useThemeColor(true, closing), {
+      initialProps: { closing: false },
+    });
+    rerender({ closing: true });
+    vi.advanceTimersByTime(1000);
+    expect(document.documentElement.style.backgroundColor).toBe("rgb(10, 20, 30)");
+  });
+
+  it("leaves the background to another overlay still open", () => {
+    vi.useFakeTimers();
+    document.documentElement.style.backgroundColor = "rgb(10, 20, 30)";
+
+    const other = renderHook(() => useThemeColor(true));
+    const { rerender, unmount } = renderHook(({ closing }) => useThemeColor(true, closing), {
+      initialProps: { closing: false },
+    });
+    vi.advanceTimersByTime(400);
+    rerender({ closing: true });
+    expect(document.documentElement.style.backgroundColor).not.toBe("rgb(10, 20, 30)");
+    unmount();
+    other.unmount();
+    expect(document.documentElement.style.backgroundColor).toBe("rgb(10, 20, 30)");
+  });
+
   it("cancels a pending root-background swap when unmounted mid-fade", () => {
     vi.useFakeTimers();
     document.documentElement.style.backgroundColor = "rgb(10, 20, 30)";
@@ -86,5 +134,16 @@ describe("useThemeColor", () => {
 
     vi.advanceTimersByTime(1000);
     expect(document.documentElement.style.backgroundColor).toBe("rgb(10, 20, 30)");
+  });
+
+  it("times the background swap off the backdrop's fade-in", () => {
+    vi.useFakeTimers();
+    document.documentElement.style.setProperty("--rvl-backdrop-in", "500ms");
+    const { unmount } = renderHook(() => useThemeColor(true));
+    vi.advanceTimersByTime(540);
+    expect(document.documentElement.style.backgroundColor).toBe("");
+    vi.advanceTimersByTime(20);
+    expect(document.documentElement.style.backgroundColor).not.toBe("");
+    unmount();
   });
 });

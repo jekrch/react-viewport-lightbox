@@ -3,6 +3,28 @@
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 See [docs/RELEASING.md](docs/RELEASING.md) for the format.
 
+## v0.10.0
+
+- **Swipe to close** — drag the image up or down to dismiss; opt out with `swipeToClose={false}`.
+- **Keyboard** — `+` `-` `0` zoom, arrows pan while zoomed, `Home`/`End` jump to the ends.
+- **Thumbnail-first open** — shows the tile's loaded image (or `item.thumbnail`) at once, then swaps in `src`.
+- **`stageShift`** — new prop to push the image out of view for a drawer.
+- **`history`** — new prop: back closes the viewer, optionally syncing a URL param; also `useViewerHistory`.
+- **`onCloseStart`** / **`onOpenComplete`** — new callbacks at the start of a close and the end of an open.
+- **`hint`** — new prop for a built-in gesture hint line.
+- **`renderHeaderMeta`** — new slot for a small line under the top-right buttons.
+- **`ViewerButton`** — the chrome button, exported for your slots; `active` sets `aria-pressed`.
+- **`originFromAttribute`** — ready-made `getOrigin`; `getOrigin` now also receives the item.
+- **Fewer re-renders** — slots no longer re-run on internal viewer updates; `ctx` actions are stable.
+- **`closeOnBackdropClick`** — suspended while the stage is shifted.
+- **Backdrop fade** — smoother in and out, tunable via `--rvl-backdrop-in`/`-out` (+ `-ease`); blur now opt-in.
+- **No page shift on open/close** — with body margins, a centered body, or `overflow-y: scroll`.
+- **`--rvl-scrollbar-width`** — set on `<html>` while locked, for your `position: fixed` elements to hold still too.
+- **Keys in text fields** — no longer zoom, pan, or page the viewer.
+- **Accessibility** — slide changes announced; reduced motion also cuts slides.
+- **`classNames.header`** — new slot; `classNames.topBar` no longer also lands on the header.
+- **Bundle** — minified, with a `"use client"` banner.
+
 ## v0.9.2
 
 - **Zoom-from-thumbnail** — no longer stutters on iOS Safari when opened from a scrolled page.

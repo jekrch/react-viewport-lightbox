@@ -11,6 +11,13 @@ export { useBarMeasure } from "./useBarMeasure";
 export { useBodyScrollLock } from "./useBodyScrollLock";
 export { useViewportHeight } from "./useViewportHeight";
 export { useThemeColor } from "./useThemeColor";
+export { useViewerHistory, type ViewerHistory } from "./useViewerHistory";
+export {
+  useSwipeDismiss,
+  type SwipeDismissHandlers,
+  type SwipeDismissState,
+  type SwipeDismissArgs,
+} from "./useSwipeDismiss";
 export {
   clampTranslate,
   resolveSlideDirection,

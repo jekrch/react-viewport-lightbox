@@ -15,8 +15,9 @@ if you'd rather build your own shell.
 
 - **Zero runtime dependencies.** React is a peer dependency; no Tailwind or icon
   library required.
-- **Touch and desktop.** Wheel/pinch zoom, drag/swipe navigation, double-tap and
-  double-click, keyboard arrows, rubber-band edges.
+- **Touch and desktop.** Wheel/pinch zoom, drag/swipe navigation, swipe down to
+  close, double-tap and double-click, keyboard zoom/pan/navigation, rubber-band
+  edges.
 - **Themeable** via CSS custom properties and per-slot `className` overrides.
 - **Accessible.** `role="dialog"` with focus trap and focus restore, labelled
   controls, honors `prefers-reduced-motion`.
@@ -75,37 +76,44 @@ animation and calls `onClose` after the exit completes.
 
 ## Props
 
-| Prop                   | Type                                                   | Default    | Description                                                                                                                                                                                                                                                                                                |
-| ---------------------- | ------------------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `items`                | `ViewerItem[]`                                         | required   | Images to display.                                                                                                                                                                                                                                                                                         |
-| `index`                | `number`                                               | required   | Controlled index of the active item.                                                                                                                                                                                                                                                                       |
-| `onIndexChange`        | `(index: number) => void`                              | required   | Called when navigation changes the index.                                                                                                                                                                                                                                                                  |
-| `onNavigate`           | `(direction: "prev" \| "next") => void`                | optional   | Fired when a slide starts (before `onIndexChange`), so overlays can animate out in sync with the image.                                                                                                                                                                                                    |
-| `onClose`              | `() => void`                                           | required   | Called after the exit animation completes.                                                                                                                                                                                                                                                                 |
-| `onEscape`             | `() => boolean`                                        | optional   | Called on Escape before the viewer closes. Return `true` to mark the key handled and veto the default close (e.g. dismiss your own overlay first); `false`/`undefined` falls through to closing.                                                                                                           |
-| `getOrigin`            | `(index: number) => HTMLElement \| ViewerRect \| null` | optional   | Enables a shared-element "zoom from thumbnail" open/close transition. Return the source element (typically your ref) for the given index — its rect, corner radius, and any `object-fit: cover` crop are read for you — or a bare `ViewerRect`, or `null` to fall back to the fade. Honors reduced-motion. |
-| `thumbnailCrop`        | `boolean`                                              | `true`     | Honor a `getOrigin` element's `object-fit: cover` crop. `false` treats every source element's own box as the flight's target, cropped or not (the behavior before 0.9).                                                                                                                                    |
-| `zoom`                 | `boolean`                                              | `true`     | Enable wheel/pinch/double-tap zoom + pan.                                                                                                                                                                                                                                                                  |
-| `zoomToCursor`         | `boolean`                                              | `true`     | Anchor wheel/pinch zoom on the pointer: scrolling zooms toward the cursor and a pinch zooms toward the gesture midpoint. Set `false` to zoom about the viewport center.                                                                                                                                    |
-| `showCounter`          | `boolean`                                              | `true`     | Show the `index / total` counter.                                                                                                                                                                                                                                                                          |
-| `showZoomControls`     | `boolean`                                              | `true`     | Show the built-in zoom in/out/reset buttons. Independent of `zoom` (the gestures): set `false` to keep zoom/pan while a consumer overlay owns the chrome. Auto-hidden on touch-primary devices and while content is shifted.                                                                               |
-| `disableNavigation`    | `boolean`                                              | `false`    | Suppress built-in arrow-key navigation and swipe commit without tearing the viewer down (e.g. while an overlay handles left/right itself). Does not hide the on-screen nav buttons.                                                                                                                        |
-| `loop`                 | `boolean`                                              | `false`    | Wrap around at the ends (buttons + arrow keys).                                                                                                                                                                                                                                                            |
-| `closeOnBackdropClick` | `boolean`                                              | `false`    | Close the viewer when the empty area around the image is clicked. Image, bars, and controls are unaffected.                                                                                                                                                                                                |
-| `renderHeader`         | `(ctx) => ReactNode`                                   | optional   | Top-left title area.                                                                                                                                                                                                                                                                                       |
-| `renderHeaderActions`  | `(ctx) => ReactNode`                                   | optional   | Extra top-right buttons (before Close).                                                                                                                                                                                                                                                                    |
-| `renderNavStart`       | `(ctx) => ReactNode`                                   | optional   | Pinned to the left edge of the nav row (e.g. a details toggle); costs no extra height, nav group stays centered.                                                                                                                                                                                           |
-| `renderNavEnd`         | `(ctx) => ReactNode`                                   | optional   | Pinned to the right edge of the nav row.                                                                                                                                                                                                                                                                   |
-| `navSlotPlacement`     | `"edge" \| "inline"`                                   | `"edge"`   | Where `renderNavStart`/`renderNavEnd` sit: `"edge"` pins them to the row edges (nav group stays optically centered); `"inline"` places them directly flanking the arrows as one centered cluster.                                                                                                          |
-| `navHeight`            | `number \| string`                                     | `2.375rem` | Size of the prev/next nav arrows. A number is pixels; a string is used verbatim. Sets `--rvl-nav-height`, so it can also be themed in CSS.                                                                                                                                                                 |
-| `navInset`             | `number \| string`                                     | `1.3rem`   | Gap between the bottom nav controls and the viewport's bottom edge (floored by the safe-area inset). Number is pixels; string verbatim. Sets `--rvl-nav-inset`.                                                                                                                                            |
-| `counterFontSize`      | `number \| string`                                     | `0.29×`    | Overrides the counter font size (which otherwise scales with `navHeight`). Number is pixels; string verbatim. Sets `--rvl-counter-font-size`.                                                                                                                                                              |
-| `renderFooter`         | `(ctx) => ReactNode`                                   | optional   | Content below the nav row.                                                                                                                                                                                                                                                                                 |
-| `renderOverlay`        | `(ctx) => ReactNode`                                   | optional   | Drawers and graphs layered over the image.                                                                                                                                                                                                                                                                 |
-| `renderImageOverlay`   | `(ctx) => ReactNode`                                   | optional   | Content rendered inside the image wrapper, pinned to the active image's own box (a badge, watermark, or corner caption) so it tracks the letterboxed image's corners instead of floating in the surrounding dead space. Non-interactive by default; gate on `ctx.isZoomed`.                                |
-| `classNames`           | `Partial<Record<ViewerSlot, string>>`                  | optional   | Per-slot `className` overrides.                                                                                                                                                                                                                                                                            |
-| `icons`                | `Partial<ViewerIcons>`                                 | optional   | Override `close`, `zoomIn`, `zoomOut`, `prev`, and `next`.                                                                                                                                                                                                                                                 |
-| `ariaLabel`            | `string`                                               | item `alt` | Dialog label.                                                                                                                                                                                                                                                                                              |
+| Prop                   | Type                                                 | Default    | Description                                                                                                                                                                                                                                                                                                                              |
+| ---------------------- | ---------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `items`                | `ViewerItem[]`                                       | required   | Images to display.                                                                                                                                                                                                                                                                                                                       |
+| `index`                | `number`                                             | required   | Controlled index of the active item.                                                                                                                                                                                                                                                                                                     |
+| `onIndexChange`        | `(index: number) => void`                            | required   | Called when navigation changes the index.                                                                                                                                                                                                                                                                                                |
+| `onNavigate`           | `(direction: "prev" \| "next") => void`              | optional   | Fired when a slide starts (before `onIndexChange`), so overlays can animate out in sync with the image.                                                                                                                                                                                                                                  |
+| `onClose`              | `() => void`                                         | required   | Called after the exit animation completes.                                                                                                                                                                                                                                                                                               |
+| `onEscape`             | `() => boolean`                                      | optional   | Called on Escape before the viewer closes. Return `true` to mark the key handled and veto the default close (e.g. dismiss your own overlay first); `false`/`undefined` falls through to closing.                                                                                                                                         |
+| `onCloseStart`         | `() => void`                                         | optional   | Called synchronously when a close begins (button, Escape, backdrop, back button, `ctx.close`), before the exit animation. Fires once.                                                                                                                                                                                                    |
+| `onOpenComplete`       | `() => void`                                         | optional   | Called once the open settles: when the zoom from the thumbnail lands, or when the fade-in ends. Not called if the viewer closes first.                                                                                                                                                                                                   |
+| `history`              | `boolean \| { param?, value? }`                      | `false`    | Give the open viewer a browser-history entry so back closes it. `{ param: "photo" }` also names the open item in the URL. See [Back button & deep links](#back-button--deep-links).                                                                                                                                                      |
+| `stageShift`           | `"up" \| "down" \| string \| null`                   | `null`     | Push the image stage out of view for an overlay (`"up"`/`"down"` = a full viewport; any other string is a CSS transform). Changes animate; mounting already shifted starts in place.                                                                                                                                                     |
+| `getOrigin`            | `(index, item) => HTMLElement \| ViewerRect \| null` | optional   | Enables a shared-element "zoom from thumbnail" open/close transition. Return the source element (typically your ref, or use `originFromAttribute`) for the given index — its rect, corner radius, and any `object-fit: cover` crop are read for you — or a bare `ViewerRect`, or `null` to fall back to the fade. Honors reduced-motion. |
+| `thumbnailCrop`        | `boolean`                                            | `true`     | Honor a `getOrigin` element's `object-fit: cover` crop. `false` treats every source element's own box as the flight's target, cropped or not (the behavior before 0.9).                                                                                                                                                                  |
+| `zoom`                 | `boolean`                                            | `true`     | Enable wheel/pinch/double-tap zoom + pan.                                                                                                                                                                                                                                                                                                |
+| `zoomToCursor`         | `boolean`                                            | `true`     | Anchor wheel/pinch zoom on the pointer: scrolling zooms toward the cursor and a pinch zooms toward the gesture midpoint. Set `false` to zoom about the viewport center.                                                                                                                                                                  |
+| `showCounter`          | `boolean`                                            | `true`     | Show the `index / total` counter.                                                                                                                                                                                                                                                                                                        |
+| `showZoomControls`     | `boolean`                                            | `true`     | Show the built-in zoom in/out/reset buttons. Independent of `zoom` (the gestures): set `false` to keep zoom/pan while a consumer overlay owns the chrome. Auto-hidden on touch-primary devices and while content is shifted.                                                                                                             |
+| `disableNavigation`    | `boolean`                                            | `false`    | Suppress built-in arrow/Home/End key navigation and swipe commit without tearing the viewer down (e.g. while an overlay handles left/right itself). Does not hide the on-screen nav buttons.                                                                                                                                             |
+| `loop`                 | `boolean`                                            | `false`    | Wrap around at the ends (buttons + arrow keys).                                                                                                                                                                                                                                                                                          |
+| `closeOnBackdropClick` | `boolean`                                            | `false`    | Close the viewer when the empty area around the image is clicked. Image, bars, and controls are unaffected. Off while the stage is shifted.                                                                                                                                                                                              |
+| `swipeToClose`         | `boolean`                                            | `true`     | Drag the unzoomed image up or down to close: it follows the drag and shrinks while the backdrop fades, and a far enough or fast enough release closes (collapsing into the thumbnail with `getOrigin`). Touch and mouse. Off while the stage is shifted.                                                                                 |
+| `renderHeader`         | `(ctx) => ReactNode`                                 | optional   | Top-left title area.                                                                                                                                                                                                                                                                                                                     |
+| `renderHeaderActions`  | `(ctx) => ReactNode`                                 | optional   | Extra top-right buttons (before Close).                                                                                                                                                                                                                                                                                                  |
+| `renderHeaderMeta`     | `(ctx) => ReactNode`                                 | optional   | A small right-aligned line under the top-right buttons (a byline, a date). Counted in `ctx.topBarHeight`.                                                                                                                                                                                                                                |
+| `renderNavStart`       | `(ctx) => ReactNode`                                 | optional   | Pinned to the left edge of the nav row (e.g. a details toggle); costs no extra height, nav group stays centered.                                                                                                                                                                                                                         |
+| `renderNavEnd`         | `(ctx) => ReactNode`                                 | optional   | Pinned to the right edge of the nav row.                                                                                                                                                                                                                                                                                                 |
+| `navSlotPlacement`     | `"edge" \| "inline"`                                 | `"edge"`   | Where `renderNavStart`/`renderNavEnd` sit: `"edge"` pins them to the row edges (nav group stays optically centered); `"inline"` places them directly flanking the arrows as one centered cluster.                                                                                                                                        |
+| `navHeight`            | `number \| string`                                   | `2.375rem` | Size of the prev/next nav arrows. A number is pixels; a string is used verbatim. Sets `--rvl-nav-height`, so it can also be themed in CSS.                                                                                                                                                                                               |
+| `navInset`             | `number \| string`                                   | `1.3rem`   | Gap between the bottom nav controls and the viewport's bottom edge (floored by the safe-area inset). Number is pixels; string verbatim. Sets `--rvl-nav-inset`.                                                                                                                                                                          |
+| `counterFontSize`      | `number \| string`                                   | `0.29×`    | Overrides the counter font size (which otherwise scales with `navHeight`). Number is pixels; string verbatim. Sets `--rvl-counter-font-size`.                                                                                                                                                                                            |
+| `renderFooter`         | `(ctx) => ReactNode`                                 | optional   | Content below the nav row.                                                                                                                                                                                                                                                                                                               |
+| `hint`                 | `boolean \| (ctx) => ReactNode`                      | `false`    | A muted gesture-hint line below the footer. `true` shows built-in text matched to touch/desktop, item count, `zoom`, and `disableNavigation`; a function supplies your own (e.g. i18n). Hidden while zoomed or while the stage is shifted.                                                                                               |
+| `renderOverlay`        | `(ctx) => ReactNode`                                 | optional   | Drawers and graphs layered over the image.                                                                                                                                                                                                                                                                                               |
+| `renderImageOverlay`   | `(ctx) => ReactNode`                                 | optional   | Content rendered inside the image wrapper, pinned to the active image's own box (a badge, watermark, or corner caption) so it tracks the letterboxed image's corners instead of floating in the surrounding dead space. Non-interactive by default; gate on `ctx.isZoomed`.                                                              |
+| `classNames`           | `Partial<Record<ViewerSlot, string>>`                | optional   | Per-slot `className` overrides.                                                                                                                                                                                                                                                                                                          |
+| `icons`                | `Partial<ViewerIcons>`                               | optional   | Override `close`, `zoomIn`, `zoomOut`, `prev`, and `next`.                                                                                                                                                                                                                                                                               |
+| `ariaLabel`            | `string`                                             | item `alt` | Dialog label.                                                                                                                                                                                                                                                                                                                            |
 
 ### `ViewerItem`
 
@@ -116,7 +124,7 @@ interface ViewerItem<TData = unknown> {
   srcSet?: string; // responsive candidates, forwarded to <img srcset>
   sizes?: string; // sizes for the srcSet candidates
   alt?: string;
-  thumbnail?: string; // falls back to src
+  thumbnail?: string; // low-res stand-in shown while src loads (see below)
   data?: TData; // optional per-slide payload (see below)
 }
 ```
@@ -219,6 +227,32 @@ If you have no element to give (e.g. a virtualized or computed position), return
 bare `ViewerRect` instead; the transition still plays, falling back to the image's
 own corner radius (`--rvl-radius`).
 
+If your tiles already carry the item's id in a data attribute, skip the refs:
+
+```tsx
+<img data-photo-id={photo.id} src={photo.thumb} … />
+
+<ImageViewer getOrigin={originFromAttribute("data-photo-id")} … />
+```
+
+`originFromAttribute(attr, { value?, root? })` looks the tile up by
+`value(item)` (default `item.id`, escaped for the selector), optionally inside
+`root()`, and returns `null` when it isn't on the page.
+
+#### Thumbnail-first open
+
+The open never waits on the network for an image the page already shows. When the
+`getOrigin` element contains an `<img>` that has loaded (your gallery tile), the
+viewer flies **that** image out at once, sized to the box the full image will
+fill, and swaps in `src` (decoded off-screen first, so the swap is seamless) as
+soon as it's ready. If the full image is still loading after half a second, a
+small spinner shows over the stand-in.
+
+There's nothing to configure. Without a `getOrigin` image, set
+`ViewerItem.thumbnail` to get the same stand-in. When the tile already shows the
+full `src`, there's nothing to gain and the viewer loads `src` directly as
+before.
+
 #### Cropped thumbnails
 
 A gallery tile is usually a **crop** — a fixed box with `object-fit: cover` over
@@ -283,6 +317,54 @@ interface ViewerContext<TData = unknown> {
 }
 ```
 
+`ctx` is memoized, and its actions (`goPrev`, `goNext`, `goTo`, `close`, `zoomIn`,
+`zoomOut`, `resetZoom`, `setContentShift`) keep the same identity for the viewer's
+whole life. A slot re-runs only when your component re-renders (new render
+functions) or a `ctx` value changes, not on the viewer's own internal renders
+during a swipe. Wrap heavy overlay content in `React.memo` to benefit fully.
+
+### Buttons for your slots
+
+`ViewerButton` is the viewer's own chrome button, for header actions and nav-row
+toggles, so they match the built-in zoom and close buttons:
+
+```tsx
+<ViewerButton label="Details" active={drawerOpen} onClick={toggleDrawer}>
+  <InfoIcon />
+</ViewerButton>
+```
+
+`label` is the accessible name and the tooltip (`title` overrides the tooltip).
+`active` marks a toggle: it sets `aria-pressed` and the `is-active` style; leave it
+out for a plain action button. Clicks don't reach the backdrop. Restyle it with
+`classNames.button` or the `--rvl-btn-*` properties rather than by class name.
+
+### Drawers and `stageShift`
+
+To slide the image out of the way for a drawer, describe where the stage should be
+and the viewer animates it there:
+
+```tsx
+<ImageViewer
+  {...props}
+  stageShift={drawerOpen ? "up" : null}
+  onNavigate={() => setDrawerOpen(false)}
+  renderNavStart={() => (
+    <ViewerButton label="Details" active={drawerOpen} onClick={() => setDrawerOpen((d) => !d)}>
+      <InfoIcon />
+    </ViewerButton>
+  )}
+  renderOverlay={(ctx) => <MyDrawer open={drawerOpen} item={ctx.item} />}
+/>
+```
+
+A viewer that mounts with `stageShift` already set (opened straight onto the
+details) starts in place rather than sliding there. While shifted, the zoom
+controls hide and closing fades rather than collapsing into the thumbnail, since
+the image is off screen.
+
+For finer control, such as snapping a change with no animation, use the imperative
+`ctx.setContentShift(transform, animate)`. A non-null value overrides the prop.
 Here's a Details toggle pinned left of the nav controls. Opening it slides the
 image up (`setContentShift`) and the drawer up into its place. Navigating while it
 is open slides the drawer out sideways and snaps the image back to center with
@@ -329,8 +411,9 @@ const transform = slideDir
   }}
   onClose={() => setOpen(false)}
   renderNavStart={(ctx) => (
-    <button
-      className={`rvl-btn${drawer ? " is-active" : ""}`}
+    <ViewerButton
+      label="Details"
+      active={drawer}
       onClick={() => {
         const next = !drawer;
         setSlideDir(null);
@@ -338,8 +421,8 @@ const transform = slideDir
         ctx.setContentShift(next ? "translateY(-100vh)" : null);
       }}
     >
-      {drawer ? "Hide details" : "Details"}
-    </button>
+      <InfoIcon />
+    </ViewerButton>
   )}
   renderOverlay={(ctx) => {
     shiftRef.current = ctx.setContentShift;
@@ -371,19 +454,113 @@ snap on `onNavigate` is hidden because the opaque drawer is still covering it at
 instant. For a partial peek drawer, use a smaller animated shift like
 `translateY(-40vh)` and skip the snap.
 
+## Gestures & keys
+
+| Input                      | Unzoomed                 | Zoomed        |
+| -------------------------- | ------------------------ | ------------- |
+| Swipe / drag left or right | Previous / next          | Pan           |
+| Swipe / drag up or down    | Close (`swipeToClose`)   | Pan           |
+| Pinch, wheel               | Zoom                     | Zoom          |
+| Double-tap, double-click   | Zoom in                  | Reset         |
+| `←` `→`                    | Previous / next          | Pan           |
+| `↑` `↓`                    | —                        | Pan           |
+| `Home` `End`               | First / last             | —             |
+| `+` (or `=`), `-`          | Zoom in / out            | Zoom in / out |
+| `0`                        | —                        | Reset         |
+| `Esc`                      | Close (after `onEscape`) | Close         |
+
+Keys typed into a text field (a search box in your drawer, say) are left to the
+field, and browser shortcuts with `Ctrl`/`Cmd`/`Alt` pass through. Zoom keys are
+off with `zoom={false}` and while the stage is shifted; navigation keys are off
+with `disableNavigation`.
+
+### Accessibility
+
+The viewer is a `role="dialog"` with `aria-modal="true"`, traps focus while open,
+and restores it on close. Every built-in control has a label, slide changes are
+announced through a polite live region, and reduced motion swaps the zoom and
+slides for instant cuts. Screen readers that ignore `aria-modal` can still reach
+the page behind with their reading cursor; if that matters for your app, set
+`inert` on your page's root while the viewer is open (render the viewer outside
+that root, e.g. in a portal, so it isn't inert too):
+
+```tsx
+useEffect(() => {
+  const root = document.getElementById("app")!;
+  root.inert = open;
+  return () => {
+    root.inert = false;
+  };
+}, [open]);
+```
+
+## Back button & deep links
+
+On phones, the back button or back gesture should close a full-screen viewer, not
+leave the page. Pass `history` to give the open viewer its own history entry:
+
+```tsx
+<ImageViewer {...props} history={{ param: "photo" }} />
+```
+
+- Opening pushes one entry. With `param`, its URL names the open item
+  (`?photo=<id>`, or whatever `value(item)` returns), and paging updates it in
+  place, so one back press closes the viewer however far the user paged.
+- Back runs through `onEscape` first, so an open drawer can claim the press (return
+  `true`) the same way it claims Escape. The viewer stays open and re-arms its
+  entry.
+- Closing from the UI steps back off the entry, restoring the URL you opened from.
+  A deep-linked open (`?photo=…` already in the URL) strips the param from the
+  entry underneath, so backing out lands on a closed-viewer URL.
+
+`history: true` gives the back-button behavior without touching the URL. While it's
+on, don't write the same param yourself, and keep `history.state` intact in any
+`replaceState` you make while the viewer is open (the entry is recognized by a key
+in it).
+
+## Page scroll lock
+
+While the viewer is open, the page behind it is locked in place: it can't scroll,
+and it keeps its exact scroll position when the viewer closes. Locking hides the
+page's scrollbar. On desktops with space-taking scrollbars, that would normally
+widen the viewport and nudge the page sideways, so the lock offsets the page by the
+width the viewport gained and nothing in it moves. This is always on and needs no
+setup. A root that keeps its scrollbar space anyway (`scrollbar-gutter: stable`, or
+`overflow-y: scroll` on `<html>`) gets no offset, because nothing widens.
+
+`position: fixed` elements in your page (a fixed header, a floating button) are laid
+out against the viewport rather than the page, so the lock can't hold them still by
+itself. While locked, it sets `--rvl-scrollbar-width` on `<html>` to the width it's
+compensating for (`0px` when there's none), so they can opt in with one line:
+
+```css
+.site-header {
+  padding-right: var(--rvl-scrollbar-width, 0px);
+}
+.chat-button {
+  right: calc(1rem + var(--rvl-scrollbar-width, 0px));
+}
+```
+
+The variable is removed when the viewer closes, so keep the `0px` fallback.
+
 ## Theming
 
 Override any of these CSS custom properties (cascade into the viewer):
 
-| Variable                              | Default           |
-| ------------------------------------- | ----------------- |
-| `--rvl-accent`                        | `#4c538d`         |
-| `--rvl-overlay-bg`                    | `rgba(0,0,0,0.9)` |
-| `--rvl-theme-color`                   | `#000000`         |
-| `--rvl-btn-bg` / `--rvl-btn-bg-hover` | translucent white |
-| `--rvl-radius`                        | `4px`             |
-| `--rvl-anim-duration`                 | `250ms`           |
-| `--rvl-chrome-bleed`                  | `6rem`            |
+| Variable                                   | Default                                |
+| ------------------------------------------ | -------------------------------------- |
+| `--rvl-accent`                             | `#4c538d`                              |
+| `--rvl-overlay-bg`                         | `rgba(0,0,0,0.9)`                      |
+| `--rvl-theme-color`                        | `#000000`                              |
+| `--rvl-btn-bg` / `--rvl-btn-bg-hover`      | translucent white                      |
+| `--rvl-radius`                             | `4px`                                  |
+| `--rvl-anim-duration`                      | `250ms`                                |
+| `--rvl-backdrop-in` / `--rvl-backdrop-out` | `350ms` / `250ms`                      |
+| `--rvl-backdrop-in-ease`                   | `cubic-bezier(0.4, 0, 0.2, 1)`         |
+| `--rvl-backdrop-out-ease`                  | `cubic-bezier(0.65, 0.25, 0.95, 0.95)` |
+| `--rvl-backdrop-filter`                    | `none`                                 |
+| `--rvl-chrome-bleed`                       | `6rem`                                 |
 
 ```css
 .my-gallery {
@@ -399,12 +576,19 @@ home-indicator strip below the viewport) while the viewer is open. It must be op
 `<meta name="theme-color">`, so the viewer renders fixed opaque edge strips in this
 color for Safari to sample, and still writes the legacy meta tag for iOS 15–18.
 
+The backdrop fades on its own clock (`--rvl-backdrop-in`/`-out`), a little slower
+than the zoom and chrome (`--rvl-anim-duration`), and the close waits for it.
+`--rvl-backdrop-filter` (e.g. `blur(4px)`) filters the page showing through the
+backdrop; it's off by default and always off on touch devices.
+
 `--rvl-chrome-bleed` sets how far the backdrop overdraws past the viewport edges so a
 scrolled-open overlay never reveals the page behind those iOS chrome bands; the
 default (`6rem`) suits full-height overlays and rarely needs changing.
 
 For finer control, pass `classNames` to target individual slots (`root`, `backdrop`,
-`topBar`, `bottomBar`, `image`, `button`, `counter`, `navButton`, `overlay`).
+`topBar`, `header`, `headerMeta`, `bottomBar`, `image`, `button`, `counter`,
+`navButton`, `navStart`, `navEnd`, `overlay`, `hint`, `spinner`). `.rvl-hint` is also safe to reuse in your own footer
+for a line that matches the built-in hint.
 
 ## Headless usage
 
@@ -418,10 +602,16 @@ import {
   useBarMeasure,
   useBodyScrollLock,
   useFocusTrap,
+  useViewerHistory,
+  useSwipeDismiss,
   MIN_SCALE,
   MAX_SCALE,
 } from "@jekrch/react-viewport-lightbox";
 ```
+
+Swipe-to-close is opt-in at the hook level: pass the handlers `useSwipeDismiss`
+returns as `useGestureHandler`'s last argument, and call its `flyOut()` when a
+close has no thumbnail to collapse into. Without them, vertical drags do nothing.
 
 The pure geometry/threshold helpers are exported too: `clampTranslate`,
 `resolveSlideDirection`, and the thumbnail-crop geometry behind the shared-element

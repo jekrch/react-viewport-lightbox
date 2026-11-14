@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { parseCssTime } from "./cssTime";
 
 /**
  * Tints the iOS Safari chrome — the status-bar strip on top and the
@@ -33,8 +34,12 @@ import { useEffect } from "react";
  * of the overlay. theme-color must be opaque, which is why this uses a
  * dedicated var rather than the semi-transparent `--rvl-overlay-bg`.
  *
- * Restores both overrides on unmount (not at close-start, so the chrome bands
- * don't flash the page color mid-close-fade) — reinstating the host page's own
+ * Pass `closing` once a close begins: the root background goes back to the
+ * page's own at once, while the overlay still covers it. Left until unmount,
+ * it would hold the revealed page at the overlay color through the fade-out
+ * and then step to the page's color at the very end. The meta tag stays until
+ * unmount, so the chrome bands that read it don't flash the page color
+ * mid-close-fade. Unmount restores both — reinstating the host page's own
  * meta tag, or removing the tag entirely if we created it — and
  * reference-counts concurrent activations so closing one overlay doesn't
  * revert a tint another still needs. Targets the non-`media` theme-color meta
@@ -90,7 +95,25 @@ function nudgeSafariResample(): void {
   });
 }
 
-export function useThemeColor(isActive: boolean): void {
+/** Put the page's own root background back (or cancel the pending swap). */
+function restoreRootBg(): void {
+  if (rootBgTimer !== undefined) {
+    clearTimeout(rootBgTimer);
+    rootBgTimer = undefined;
+  }
+  if (rootBgApplied) {
+    document.documentElement.style.backgroundColor = previousRootBg;
+    document.body.style.backgroundColor = previousBodyBg;
+    rootBgApplied = false;
+  }
+}
+
+export function useThemeColor(isActive: boolean, closing = false): void {
+  useEffect(() => {
+    // Only the last overlay open hands the background back.
+    if (isActive && closing && activeCount === 1) restoreRootBg();
+  }, [isActive, closing]);
+
   useEffect(() => {
     if (!isActive) return;
     if (typeof document === "undefined") return;
@@ -111,15 +134,12 @@ export function useThemeColor(isActive: boolean): void {
       }
       metaEl.setAttribute("content", color);
 
-      // Swap the canvas color once the backdrop is opaque (fade duration plus
-      // a frame or two of slack), so the change lands behind the overlay.
-      const rawDuration = rootStyles.getPropertyValue("--rvl-anim-duration").trim();
-      const parsed = parseFloat(rawDuration);
-      const fadeMs = Number.isFinite(parsed)
-        ? rawDuration.endsWith("ms")
-          ? parsed
-          : parsed * 1000
-        : 250;
+      // Swap the canvas color once the backdrop is opaque (its fade-in duration
+      // plus a frame or two of slack), so the change lands behind the overlay.
+      const fadeMs =
+        parseCssTime(rootStyles.getPropertyValue("--rvl-backdrop-in")) ??
+        parseCssTime(rootStyles.getPropertyValue("--rvl-anim-duration")) ??
+        250;
       rootBgTimer = setTimeout(() => {
         rootBgTimer = undefined;
         previousRootBg = document.documentElement.style.backgroundColor;
@@ -135,18 +155,10 @@ export function useThemeColor(isActive: boolean): void {
     return () => {
       activeCount -= 1;
       if (activeCount === 0) {
-        if (rootBgTimer !== undefined) {
-          clearTimeout(rootBgTimer);
-          rootBgTimer = undefined;
-        }
         // A pending nudge rAF is deliberately NOT canceled here: its callback
         // restores the temporary minHeight, and its scroll-back is already
         // guarded by activeCount, so letting it run is the safe path.
-        if (rootBgApplied) {
-          document.documentElement.style.backgroundColor = previousRootBg;
-          document.body.style.backgroundColor = previousBodyBg;
-          rootBgApplied = false;
-        }
+        restoreRootBg();
         if (metaEl) {
           if (createdMeta) {
             metaEl.remove();

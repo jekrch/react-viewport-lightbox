@@ -12,6 +12,7 @@ export interface CodeOptions {
   zoom: boolean;
   zoomToCursor: boolean;
   closeOnBackdropClick: boolean;
+  hint: boolean;
   navHeight: number;
   navInset: number;
   accent: string;
@@ -52,6 +53,7 @@ function buildCode(o: CodeOptions): string {
   if (o.zoom) lines.push(`          zoomToCursor={${o.zoomToCursor}}`);
 
   lines.push(`          closeOnBackdropClick={${o.closeOnBackdropClick}}`);
+  if (o.hint) lines.push(`          hint`);
 
   if (o.navHeight !== DEFAULT_NAV_HEIGHT) lines.push(`          navHeight={${o.navHeight}}`);
   if (o.navInset !== DEFAULT_NAV_INSET) lines.push(`          navInset={${o.navInset}}`);

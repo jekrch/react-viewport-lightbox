@@ -2,11 +2,24 @@ import { useLayoutEffect } from "react";
 
 /**
  * Locks scrolling on the document body while `isLocked` is true (e.g. while the
- * lightbox is open), so content behind the overlay can't be scrolled. To
- * prevent the content from shifting when the scrollbar disappears, the width
- * the scrollbar occupied is added back as right padding while locked. Restores
+ * lightbox is open), so content behind the overlay can't be scrolled. Restores
  * the previous body styles on unlock/unmount, and reference-counts concurrent
  * locks so closing one overlay doesn't release a lock held by another.
+ *
+ * No horizontal shift: locking hides the root scrollbar, which widens the
+ * viewport by the scrollbar's width. The pinned body is laid out with `left: 0`
+ * and `right: <scrollbar width>`, so its containing width is exactly what it was
+ * in flow — margins, padding, `box-sizing`, and a centered `max-width` body all
+ * resolve to the same boxes, and nothing in the page moves. (Adding the width
+ * back as body padding, the common approach, only holds for a full-width
+ * `border-box` body with no margin.)
+ *
+ * `position: fixed` elements in the host page are laid out against the
+ * viewport, not the body, so the lock can't hold them still on its own. It
+ * publishes the width it compensates for as `--rvl-scrollbar-width` on the root
+ * element while locked (`0px` when there's nothing to compensate), for them to
+ * opt in: `padding-right: var(--rvl-scrollbar-width, 0px)` on a full-width bar,
+ * `right: calc(1rem + var(--rvl-scrollbar-width, 0px))` on a corner button.
  *
  * The page is pinned with `position: fixed` and `top: -scrollY` rather than a
  * plain `overflow: hidden`. Overflow-only locking leaves the restored scroll
@@ -29,10 +42,15 @@ import { useLayoutEffect } from "react";
  * reason to touch its chrome. The body's `overflow: hidden` still propagates to
  * the viewport, so that retained range can't be scrolled by the user.
  *
- * If the page already reserves the scrollbar's space with `scrollbar-gutter:
- * stable` on the root element, that gutter stays reserved while locked, so the
- * padding compensation is skipped — adding it on top would shift the page by a
- * scrollbar's width (the visible "jump" it's meant to prevent).
+ * The compensation is measured, not assumed: the root's width is read before
+ * and after the lock hides the scrollbar, and the body is offset by exactly
+ * what the viewport gained. So a root that keeps its scrollbar space anyway —
+ * `scrollbar-gutter: stable`, or `overflow-y: scroll` on `<html>` (which the
+ * body's `overflow` can't override) — gets no offset, where adding one would
+ * itself shift the page. The measurement forces a layout, so it only runs when
+ * the root has a space-taking scrollbar to begin with (`innerWidth` exceeds the
+ * root's `clientWidth`) — never on touch devices or overlay-scrollbar desktops,
+ * whose open path stays a single layout.
  *
  * Applied and released via `useLayoutEffect`, so the `position: fixed` toggle is
  * folded into a paint rather than landing a frame late. On iOS Safari that
@@ -48,12 +66,28 @@ import { useLayoutEffect } from "react";
  */
 let lockCount = 0;
 let previousOverflow = "";
-let previousPaddingRight = "";
 let previousPosition = "";
 let previousTop = "";
-let previousWidth = "";
+let previousLeft = "";
+let previousRight = "";
 let previousRootMinHeight = "";
+let previousScrollbarVar = "";
 let lockedScrollY = 0;
+let compensation = 0;
+
+/** Root-element custom property holding the scrollbar width a lock compensates for. */
+export const SCROLLBAR_WIDTH_VAR = "--rvl-scrollbar-width";
+
+/**
+ * The scrollbar width (px) the active lock is compensating for: how much wider
+ * the viewport became when the lock hid the root scrollbar. `0` when nothing is
+ * locked, the scrollbar takes no space (overlay scrollbars, touch devices), or
+ * the root keeps its scrollbar space while locked (`scrollbar-gutter: stable`,
+ * `overflow-y: scroll` on `<html>`).
+ */
+export function getScrollLockCompensation(): number {
+  return lockCount > 0 ? compensation : 0;
+}
 
 export function useBodyScrollLock(isLocked: boolean): void {
   useLayoutEffect(() => {
@@ -61,51 +95,50 @@ export function useBodyScrollLock(isLocked: boolean): void {
     if (typeof document === "undefined") return;
 
     if (lockCount === 0) {
-      const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-
-      // When the root reserves a stable gutter, the space stays reserved while
-      // locked, so compensating with padding would shift the page instead of
-      // holding it still.
-      const rootGutter = window.getComputedStyle(document.documentElement).scrollbarGutter;
-      const reservesGutter = typeof rootGutter === "string" && rootGutter.includes("stable");
-
       const root = document.documentElement;
+      const widthBefore = root.clientWidth;
+      const hasScrollbar = window.innerWidth > widthBefore;
       lockedScrollY = window.scrollY;
       // Read before the body is pinned, while it still has its real height.
       const scrollHeight = root.scrollHeight;
       previousRootMinHeight = root.style.minHeight;
       previousOverflow = document.body.style.overflow;
-      previousPaddingRight = document.body.style.paddingRight;
       previousPosition = document.body.style.position;
       previousTop = document.body.style.top;
-      previousWidth = document.body.style.width;
-
-      // Pin the page at its current offset. `width: 100%` keeps the body its
-      // normal width once it's out of flow; `overflow: hidden` guards against a
+      previousLeft = document.body.style.left;
+      previousRight = document.body.style.right;
+      previousScrollbarVar = root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR);
+      // Pin the page at its current offset. `left`/`right` give the out-of-flow
+      // body the containing width it had in flow — the viewport minus the
+      // scrollbar it just lost (see above); `overflow: hidden` guards against a
       // stray scroll on the (now un-pinned) root.
       document.body.style.overflow = "hidden";
       document.body.style.position = "fixed";
       document.body.style.top = `-${lockedScrollY}px`;
-      document.body.style.width = "100%";
+      document.body.style.left = "0px";
+      document.body.style.right = "0px";
+      // How much wider the viewport got from hiding the scrollbar (see above).
+      compensation = hasScrollbar ? Math.max(0, root.clientWidth - widthBefore) : 0;
+      if (compensation > 0) document.body.style.right = `${compensation}px`;
+      root.style.setProperty(SCROLLBAR_WIDTH_VAR, `${compensation}px`);
       // Hold the scroll range the pinned body just vacated (see above).
       root.style.minHeight = `${scrollHeight}px`;
-      if (scrollbarWidth > 0 && !reservesGutter) {
-        const currentPaddingRight =
-          parseFloat(window.getComputedStyle(document.body).paddingRight) || 0;
-        document.body.style.paddingRight = `${currentPaddingRight + scrollbarWidth}px`;
-      }
     }
     lockCount += 1;
 
     return () => {
       lockCount -= 1;
       if (lockCount === 0) {
+        const root = document.documentElement;
         document.body.style.overflow = previousOverflow;
-        document.body.style.paddingRight = previousPaddingRight;
         document.body.style.position = previousPosition;
         document.body.style.top = previousTop;
-        document.body.style.width = previousWidth;
-        document.documentElement.style.minHeight = previousRootMinHeight;
+        document.body.style.left = previousLeft;
+        document.body.style.right = previousRight;
+        root.style.minHeight = previousRootMinHeight;
+        if (previousScrollbarVar) root.style.setProperty(SCROLLBAR_WIDTH_VAR, previousScrollbarVar);
+        else root.style.removeProperty(SCROLLBAR_WIDTH_VAR);
+        compensation = 0;
         // Restore the exact offset the page was pinned at — normally a no-op,
         // since the held range kept it, unless something scrolled meanwhile.
         window.scrollTo(0, lockedScrollY);

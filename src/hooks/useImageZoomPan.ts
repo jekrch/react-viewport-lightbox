@@ -102,7 +102,9 @@ export function useImageZoomPan(
         wrapper.style.position = "absolute";
         wrapper.style.inset = "0";
         wrapper.style.zIndex = "30";
-        wrapper.style.backgroundColor = "black";
+        // Letterbox fill behind the zoomed image: the theme's opaque backdrop
+        // color, falling back to black in a headless shell without styles.css.
+        wrapper.style.backgroundColor = "var(--rvl-theme-color, #000)";
         wrapper.style.cursor = "grab";
         // Promote only while zoomed/panning; the wrapper is the element the
         // zoom transform lives on, so this is where the hint belongs.

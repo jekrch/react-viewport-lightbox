@@ -23,7 +23,14 @@ export interface ViewerItem<TData = unknown> {
   /** `sizes` for the `srcSet` candidates, forwarded to `<img sizes>`. */
   sizes?: string;
   alt?: string;
-  /** Optional thumbnail url; falls back to `src`. */
+  /**
+   * Optional low-resolution url for this image (e.g. the gallery tile's
+   * source). When the viewer opens on this item it is shown straight away,
+   * scaled up to the image's resting size, and swapped for `src` once the full
+   * image has decoded, so the open never waits on the network. Ignored when it
+   * is the same url as `src`. With `getOrigin`, an already-loaded `<img>`
+   * inside the origin element is used the same way, with no need to set this.
+   */
   thumbnail?: string;
   /** Arbitrary per-slide payload, surfaced as `ctx.item.data` in render slots. */
   data?: TData;
@@ -46,6 +53,8 @@ export type ViewerSlot =
   | "root"
   | "backdrop"
   | "topBar"
+  | "header"
+  | "headerMeta"
   | "bottomBar"
   | "image"
   | "button"
@@ -54,6 +63,7 @@ export type ViewerSlot =
   | "navStart"
   | "navEnd"
   | "overlay"
+  | "hint"
   | "spinner";
 
 /** Overridable control icons. Each is a React node rendered inside its button. */
@@ -107,12 +117,36 @@ export interface ViewerContext<TData = unknown> {
 
   /**
    * Lets an overlay push the image track up/down (drawer-open behavior).
+   * Prefer the declarative {@link ImageViewerProps.stageShift} prop; this
+   * imperative form overrides it while set to a non-null value.
    * Pass a CSS transform string, or `null` to reset. `animate` defaults to
    * `true`; pass `false` to apply the shift instantly with no transition — e.g.
    * to snap the image back to center on navigation so it slides in horizontally
    * instead of dropping down.
    */
   setContentShift: (transform: string | null, animate?: boolean) => void;
+}
+
+/**
+ * Where the image stage sits. `"up"` / `"down"` push it a full viewport out of
+ * view (to reveal a drawer below or above it); any other string is used
+ * verbatim as a CSS transform; `null` keeps it centered.
+ */
+export type ViewerStageShift = "up" | "down" | (string & {}) | null;
+
+/** Options for {@link ImageViewerProps.history}. */
+export interface ViewerHistoryOptions<TData = unknown> {
+  /**
+   * Query parameter that names the open item, e.g. `"photo"` for
+   * `?photo=<id>`. Written into the viewer's history entry and kept current as
+   * the user navigates. Omit to leave the URL alone.
+   */
+  param?: string;
+  /**
+   * The parameter's value for an item. Defaults to `item.id`. Return `null` to
+   * leave the parameter off for an item that has no linkable value.
+   */
+  value?: (item: ViewerItem<TData>) => string | null;
 }
 
 export interface ImageViewerProps<TData = unknown> {
@@ -129,6 +163,21 @@ export interface ImageViewerProps<TData = unknown> {
   /** Called AFTER the exit animation completes. */
   onClose: () => void;
   /**
+   * Called synchronously the moment a close begins (button, Escape, backdrop,
+   * back button, or `ctx.close`), before the exit animation, and before the
+   * thumbnail collapse measures its target. State updates made here commit in
+   * the same frame as the close, so a page you paused while the viewer was
+   * open can come back under the still-opaque backdrop. Fires once per viewer.
+   */
+  onCloseStart?: () => void;
+  /**
+   * Called once the open has settled: when the zoom from the thumbnail lands
+   * (see {@link getOrigin}), or when the fade-in finishes without one. Handy
+   * for analytics, or for moving focus into an overlay. Not called for a
+   * viewer that closes before then. Fires once per viewer.
+   */
+  onOpenComplete?: () => void;
+  /**
    * Called when the user presses Escape, before the viewer closes. Return
    * `true` to mark the key handled and veto the default close — e.g. to dismiss
    * a consumer overlay (drawer/graph) first, closing the viewer only on a
@@ -136,6 +185,30 @@ export interface ImageViewerProps<TData = unknown> {
    * close.
    */
   onEscape?: () => boolean;
+
+  /**
+   * Give the open viewer its own browser-history entry, so the back button or
+   * back gesture closes it rather than leaving the page. `true` pushes a
+   * bare entry; pass `{ param }` to also name the open item in the URL (a
+   * shareable deep link), kept current as the user pages. A back press runs
+   * through {@link onEscape} first, so a consumer overlay can claim it the same
+   * way it claims Escape. Default off.
+   *
+   * While this is on, don't write the same parameter yourself, and preserve
+   * `history.state` in any `replaceState` you make while the viewer is open:
+   * the entry is recognized by a key in that state.
+   */
+  history?: boolean | ViewerHistoryOptions<TData>;
+
+  /**
+   * Push the image stage out of view to make room for an overlay, e.g.
+   * `stageShift={drawerOpen ? "up" : null}`. Changes animate; a viewer that
+   * mounts already shifted starts in place with no slide. The declarative
+   * form of {@link ViewerContext.setContentShift}; when both are set, a
+   * non-null `setContentShift` wins. While shifted, the zoom controls hide and
+   * a close fades instead of collapsing into the thumbnail.
+   */
+  stageShift?: ViewerStageShift;
 
   /**
    * Enables a shared-element "zoom from thumbnail" open/close transition. Given
@@ -157,8 +230,12 @@ export interface ImageViewerProps<TData = unknown> {
    * and out across the flight instead of appearing and vanishing in one frame
    * at the hand-off. `object-position` is honored. See {@link thumbnailCrop} to
    * turn this off.
+   *
+   * The item is passed alongside its index. For tiles that carry the item's id
+   * in a data attribute, `getOrigin={originFromAttribute("data-photo-id")}`
+   * does the lookup.
    */
-  getOrigin?: (index: number) => HTMLElement | ViewerRect | null;
+  getOrigin?: (index: number, item: ViewerItem<TData>) => HTMLElement | ViewerRect | null;
 
   /**
    * Honor a `getOrigin` element's `object-fit: cover` crop, per the note on
@@ -198,15 +275,31 @@ export interface ImageViewerProps<TData = unknown> {
   /**
    * Close the viewer when the empty area around the image (the backdrop) is
    * clicked. Clicks on the image, the bars, and the control buttons are
-   * unaffected. Default `false`.
+   * unaffected. Suspended while the stage is shifted ({@link ImageViewerProps.stageShift} or
+   * `ctx.setContentShift`), since the backdrop is then under an overlay rather
+   * than around the image. Default `false`.
    */
   closeOnBackdropClick?: boolean;
+  /**
+   * Drag the image up or down to close. The image follows the drag and shrinks
+   * while the backdrop and bars fade; released far enough (or flicked), the
+   * viewer closes, collapsing into the thumbnail when `getOrigin` supplies one.
+   * Works with touch and mouse, only while the image isn't zoomed (a drag then
+   * pans), and is suspended while the stage is shifted. Default `true`.
+   */
+  swipeToClose?: boolean;
 
   // Slots (all receive ViewerContext)
   /** Top-left title area. */
   renderHeader?: (ctx: ViewerContext<TData>) => ReactNode;
   /** Extra top-right buttons, rendered before the close button. */
   renderHeaderActions?: (ctx: ViewerContext<TData>) => ReactNode;
+  /**
+   * A small line under the top-right buttons, right-aligned (a byline, a
+   * date). Takes part in the bar's layout, so `ctx.topBarHeight` includes it.
+   * Styled by `.rvl-header-meta`; target it with `classNames.headerMeta`.
+   */
+  renderHeaderMeta?: (ctx: ViewerContext<TData>) => ReactNode;
   /**
    * Pinned to the LEFT edge of the nav row, vertically centered alongside the
    * prev/counter/next group (which stays optically centered). Ideal for an
@@ -246,6 +339,17 @@ export interface ImageViewerProps<TData = unknown> {
   counterFontSize?: number | string;
   /** Content below the nav row. */
   renderFooter?: (ctx: ViewerContext<TData>) => ReactNode;
+  /**
+   * A muted gesture-hint line at the very bottom, below {@link renderFooter}.
+   * `true` shows built-in text that names only what works right now: touch vs.
+   * desktop gestures, navigation only with more than one item (and not under
+   * `disableNavigation`), zoom only when `zoom` is on, `esc` on desktop. A
+   * function supplies your own text instead (e.g. for i18n); return `null` to
+   * hide it. Either way the line hides while zoomed or while the stage is
+   * shifted. Styled by `.rvl-hint`; target it with `classNames.hint`.
+   * Default `false`.
+   */
+  hint?: boolean | ((ctx: ViewerContext<TData>) => ReactNode);
   /** Drawers/graphs layered over the image. */
   renderOverlay?: (ctx: ViewerContext<TData>) => ReactNode;
   /**

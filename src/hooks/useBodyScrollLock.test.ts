@@ -1,14 +1,47 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { renderHook } from "@testing-library/react";
-import { useBodyScrollLock } from "./useBodyScrollLock";
+import {
+  useBodyScrollLock,
+  getScrollLockCompensation,
+  SCROLLBAR_WIDTH_VAR,
+} from "./useBodyScrollLock";
+
+/**
+ * Fakes a classic (space-taking) root scrollbar of `width` px that the lock's
+ * `overflow: hidden` removes — unless `keepsSpace` (a stable gutter, or a
+ * forced `overflow-y: scroll` on the root), where the viewport never widens.
+ */
+function withScrollbar(width: number, keepsSpace = false): () => void {
+  const root = document.documentElement;
+  const viewport = 1000;
+  Object.defineProperty(root, "clientWidth", {
+    configurable: true,
+    get: () =>
+      !keepsSpace && document.body.style.overflow === "hidden" ? viewport : viewport - width,
+  });
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    writable: true,
+    value: viewport,
+  });
+  return () => {
+    delete (root as { clientWidth?: number }).clientWidth;
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 1024,
+    });
+  };
+}
 
 afterEach(() => {
   document.body.style.overflow = "";
-  document.body.style.paddingRight = "";
   document.body.style.position = "";
   document.body.style.top = "";
-  document.body.style.width = "";
+  document.body.style.left = "";
+  document.body.style.right = "";
   document.documentElement.style.minHeight = "";
+  document.documentElement.style.removeProperty(SCROLLBAR_WIDTH_VAR);
 });
 
 describe("useBodyScrollLock", () => {
@@ -23,11 +56,73 @@ describe("useBodyScrollLock", () => {
     const { unmount } = renderHook(() => useBodyScrollLock(true));
     expect(document.body.style.position).toBe("fixed");
     expect(document.body.style.top).toBe("0px");
-    expect(document.body.style.width).toBe("100%");
+    expect(document.body.style.left).toBe("0px");
     unmount();
     expect(document.body.style.position).toBe("");
     expect(document.body.style.top).toBe("");
-    expect(document.body.style.width).toBe("");
+    expect(document.body.style.left).toBe("");
+    expect(document.body.style.right).toBe("");
+  });
+
+  it("holds the body's in-flow width by offsetting the vacated scrollbar", () => {
+    const restore = withScrollbar(15);
+    try {
+      document.body.style.paddingRight = "2rem";
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(document.body.style.right).toBe("15px");
+      // The body's own padding is left alone: the offset alone restores its width.
+      expect(document.body.style.paddingRight).toBe("2rem");
+      expect(getScrollLockCompensation()).toBe(15);
+      unmount();
+      expect(document.body.style.right).toBe("");
+      expect(getScrollLockCompensation()).toBe(0);
+    } finally {
+      document.body.style.paddingRight = "";
+      restore();
+    }
+  });
+
+  it("publishes the compensated width as a root CSS variable while locked", () => {
+    const restore = withScrollbar(17);
+    try {
+      const root = document.documentElement;
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("17px");
+      unmount();
+      expect(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("");
+    } finally {
+      restore();
+    }
+  });
+
+  it("publishes 0px when the scrollbar takes no space", () => {
+    const { unmount } = renderHook(() => useBodyScrollLock(true));
+    expect(document.documentElement.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("0px");
+    expect(document.body.style.right).toBe("0px");
+    unmount();
+  });
+
+  it("skips compensation when the root keeps its scrollbar space while locked", () => {
+    // scrollbar-gutter: stable, or overflow-y: scroll on <html>.
+    const restore = withScrollbar(15, true);
+    try {
+      const { unmount } = renderHook(() => useBodyScrollLock(true));
+      expect(document.body.style.right).toBe("0px");
+      expect(document.documentElement.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("0px");
+      expect(getScrollLockCompensation()).toBe(0);
+      unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("restores a host's own value for the scrollbar variable on unlock", () => {
+    const root = document.documentElement;
+    root.style.setProperty(SCROLLBAR_WIDTH_VAR, "3px");
+    const { unmount } = renderHook(() => useBodyScrollLock(true));
+    expect(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("0px");
+    unmount();
+    expect(root.style.getPropertyValue(SCROLLBAR_WIDTH_VAR)).toBe("3px");
   });
 
   it("holds the root's scroll height while pinned and releases it on unmount", () => {

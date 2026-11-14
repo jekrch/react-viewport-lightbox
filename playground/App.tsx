@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { ImageViewer, type ViewerContext, type ViewerItem } from "@jekrch/react-viewport-lightbox";
+import {
+  ImageViewer,
+  ViewerButton,
+  type ViewerContext,
+  type ViewerItem,
+} from "@jekrch/react-viewport-lightbox";
 import { CodePanel } from "./CodePanel";
 import "../src/styles.css";
 import "./playground.css";
@@ -82,6 +87,7 @@ export function App() {
   const [zoom, setZoom] = useState(true);
   const [zoomToCursor, setZoomToCursor] = useState(true);
   const [closeOnBackdropClick, setCloseOnBackdropClick] = useState(true);
+  const [hint, setHint] = useState(true);
   const [navHeight, setNavHeight] = useState(38);
   const [navInset, setNavInset] = useState(21);
   const [accent, setAccent] = useState(ACCENTS[0]);
@@ -225,6 +231,10 @@ export function App() {
             Click backdrop to close
           </label>
           <label className="pg-toggle">
+            <input type="checkbox" checked={hint} onChange={(e) => setHint(e.target.checked)} />
+            Gesture hint
+          </label>
+          <label className="pg-toggle">
             <input
               type="checkbox"
               checked={showCode}
@@ -278,6 +288,7 @@ export function App() {
               zoom={zoom}
               zoomToCursor={zoomToCursor}
               closeOnBackdropClick={closeOnBackdropClick}
+              hint={hint}
               navHeight={navHeight}
               navInset={navInset}
               accent={accent}
@@ -313,6 +324,7 @@ export function App() {
           zoom={zoom}
           zoomToCursor={zoomToCursor}
           closeOnBackdropClick={closeOnBackdropClick}
+          hint={hint}
           navHeight={navHeight}
           navInset={navInset}
           getOrigin={(i) => thumbRefs.current[i]}
@@ -341,9 +353,10 @@ export function App() {
             </>
           )}
           renderNavStart={(ctx) => (
-            <button
-              type="button"
-              className={`rvl-btn${drawerOpen ? " is-active" : ""}`}
+            <ViewerButton
+              label={drawerOpen ? "Hide details" : "Details"}
+              title="Show details"
+              active={drawerOpen}
               onClick={() => {
                 const next = !drawerOpen;
                 setSlideDir(null);
@@ -351,11 +364,9 @@ export function App() {
                 // Slide the image up out of view when the drawer opens (animated).
                 ctx.setContentShift(next ? "translateY(-100vh)" : null);
               }}
-              aria-pressed={drawerOpen}
-              title="Show details"
             >
               {drawerOpen ? "Hide details" : "Details"}
-            </button>
+            </ViewerButton>
           )}
           renderOverlay={(ctx) => {
             // Capture the imperative shift setter for the onNavigate handler.

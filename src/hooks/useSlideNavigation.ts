@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ViewerItem } from "../types";
 import { resolveSlideDirection } from "./math";
+import { prefersReducedMotion } from "./useSharedElementZoom";
 
 /** Breathing room, in px, between the screen edge and the incoming image. */
 const SLIDE_GAP = 24;
@@ -60,12 +61,6 @@ function measureSlideDistance(track: HTMLElement | null): number {
   if (!maxW) return vw;
   return Math.min(vw + SLIDE_GAP, vw / 2 + maxW / 2 + SLIDE_GAP);
 }
-
-/**
- * Run `cb` exactly once when `el` finishes its transition, or after `fallbackMs`
- * if `transitionend` never fires (an interrupted transition, or none set). No-op
- * when `el` is null.
- */
 
 /**
  * Run `cb` exactly once when `el` finishes its transition, or after `fallbackMs`
@@ -222,8 +217,10 @@ export function useSlideNavigation(
   );
 
   const snapBack = useCallback(() => {
+    // Reduced motion: the image drops straight back instead of gliding.
+    const animate = !prefersReducedMotion();
     setSlideAnimating(true);
-    applySlideOffset(0, true);
+    applySlideOffset(0, animate);
 
     onTransitionEndOnce(
       slideTrackRef.current,
@@ -231,7 +228,7 @@ export function useSlideNavigation(
         setSlideAnimating(false);
         setSlideActive(false);
       },
-      350,
+      animate ? 350 : 0,
     );
   }, [applySlideOffset]);
 
@@ -260,8 +257,10 @@ export function useSlideNavigation(
       updateSlideDistance(distance);
       const targetOffset = direction === "prev" ? distance : -distance;
       // Finish the slide at (clamped) gesture speed — see slideDurationMs.
+      // Reduced motion cuts straight to the target: no glide, and the
+      // completion runs on the next tick instead of waiting for a transition.
       const remaining = Math.max(0, distance - Math.abs(swipeOffsetRef.current));
-      const durationMs = slideDurationMs(remaining, velocityPxMs);
+      const durationMs = prefersReducedMotion() ? 0 : slideDurationMs(remaining, velocityPxMs);
       setSlideActive(true);
       setSlideAnimating(true);
       // Fire at the START of the slide so overlays (info drawers) can animate
@@ -269,7 +268,7 @@ export function useSlideNavigation(
       onSlideStart?.(direction);
 
       requestAnimationFrame(() => {
-        applySlideOffset(targetOffset, true, durationMs);
+        applySlideOffset(targetOffset, durationMs > 0, durationMs);
 
         onTransitionEndOnce(
           slideTrackRef.current,
@@ -308,7 +307,7 @@ export function useSlideNavigation(
                 doNavigate();
               });
           },
-          durationMs + 120,
+          durationMs ? durationMs + 120 : 0,
         );
       });
     },

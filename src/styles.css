@@ -33,6 +33,22 @@
   --rvl-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --rvl-radius: 4px;
   --rvl-anim-duration: 250ms;
+  /* The backdrop's own fade, longer and gentler than the rest: a full-screen
+     darkening reads as abrupt at the 250ms the zoom and chrome use. In and out
+     are separate; the close waits for the out fade before unmounting.
+     The curves differ because the eye doesn't see opacity evenly: over a dark
+     overlay, the change from 1 to ~0.5 is most of what's visible. The in curve
+     spends its long tail there. The out curve starts there, so it has to start
+     gently; a symmetric ease would use up the visible part of the fade-out in
+     its first ~120ms and read as a snap. */
+  --rvl-backdrop-in: 350ms;
+  --rvl-backdrop-out: 250ms;
+  --rvl-backdrop-in-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --rvl-backdrop-out-ease: cubic-bezier(0.65, 0.25, 0.95, 0.95);
+  /* Filter on what shows through the backdrop, e.g. blur(4px). Off by default:
+     behind a 90% overlay it's barely visible, and compositing it under the fade
+     can drop frames. Always off on touch-primary devices (see below). */
+  --rvl-backdrop-filter: none;
   --rvl-z: 50;
   /* Size of the bottom prev/next nav arrows. Settable via the `navHeight` prop.
      Defaults to 38px to match the comic-snaps viewer. */
@@ -86,23 +102,27 @@
   inset: calc(-1 * var(--rvl-chrome-bleed)) 0;
   z-index: 0;
   background-color: var(--rvl-overlay-bg);
-  /* Blur is applied statically, not transitioned. iOS Safari recomputes a
-     full-screen Gaussian blur on every frame of a `backdrop-filter` transition
-     and flickers/steps while doing it — especially when the thumbnail-zoom FLIP
-     is compositing at the same time (reads as the whole open "glitching"). The
-     value is constant here, so the layer just fades in via opacity (cheaply
-     composited edge-to-edge) with the blur carried along inside it. The
-     `-webkit-` prefix is required for reliable engagement on iOS. */
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
+  /* Any filter (opt-in, --rvl-backdrop-filter) is applied statically, never
+     transitioned. iOS Safari recomputes a full-screen Gaussian blur on every
+     frame of a `backdrop-filter` transition and flickers/steps while doing it —
+     especially when the thumbnail-zoom FLIP is compositing at the same time.
+     The value is constant here, so the layer just fades in via opacity with
+     the filter carried along inside it. The `-webkit-` prefix is required for
+     reliable engagement on iOS. */
+  -webkit-backdrop-filter: var(--rvl-backdrop-filter);
+  backdrop-filter: var(--rvl-backdrop-filter);
   opacity: 0;
   /* Force a compositing layer so the opacity fade is GPU-composited rather than
      repainted (iOS flickers the safe-area band on a repainted fade). */
   transform: translateZ(0);
-  transition: opacity var(--rvl-anim-duration) ease-out;
+  /* The out fade; the in fade is set by the visible state below (a transition
+     runs with the duration of the state it's heading into). */
+  transition: opacity var(--rvl-backdrop-out) var(--rvl-backdrop-out-ease);
 }
 .rvl-root.rvl-visible .rvl-backdrop {
   opacity: 1;
+  transition-duration: var(--rvl-backdrop-in);
+  transition-timing-function: var(--rvl-backdrop-in-ease);
 }
 
 /* Safari 26 chrome tint sources. iOS/macOS Safari 26 no longer honors
@@ -135,6 +155,17 @@
 .rvl-chrome-tint-bottom {
   bottom: 0;
 }
+/* Only phones and tablets need them: their chrome is what the strips tint.
+   On a desktop nothing covers them, so they'd be two solid lines over the
+   fading backdrop that click off at the end of a close. */
+.rvl-chrome-tint {
+  display: none;
+}
+@media (hover: none) and (pointer: coarse) {
+  .rvl-chrome-tint {
+    display: block;
+  }
+}
 
 /* Bars ---------------------------------------------------------------------- */
 
@@ -154,8 +185,15 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  padding-top: max(0.75rem, env(safe-area-inset-top));
+  /* Each edge is floored by its safe-area inset: top for the notch/status bar,
+     left/right for a notched phone in landscape. Longhands so the wider-screen
+     values below only change the vars, never drop the inset floors. */
+  --rvl-top-bar-pad-y: 0.75rem;
+  --rvl-top-bar-pad-x: 1rem;
+  padding-top: max(var(--rvl-top-bar-pad-y), env(safe-area-inset-top));
+  padding-bottom: var(--rvl-top-bar-pad-y);
+  padding-left: max(var(--rvl-top-bar-pad-x), env(safe-area-inset-left));
+  padding-right: max(var(--rvl-top-bar-pad-x), env(safe-area-inset-right));
   background: linear-gradient(to bottom, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0));
   opacity: 0;
   transform: translateY(-0.75rem);
@@ -174,7 +212,8 @@
 
 @media (min-width: 640px) {
   .rvl-top-bar {
-    padding: 1rem 1.5rem;
+    --rvl-top-bar-pad-y: 1rem;
+    --rvl-top-bar-pad-x: 1.5rem;
   }
 }
 
@@ -202,6 +241,25 @@
   gap: 0.25rem;
   pointer-events: auto;
   flex-shrink: 0;
+}
+/* Only present with renderHeaderMeta: stacks the actions over the meta line. */
+.rvl-header-end {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.rvl-header-meta {
+  max-width: 100%;
+  font-size: 0.625rem;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--rvl-bar-fg-faint);
+  pointer-events: auto;
 }
 
 /* Buttons ------------------------------------------------------------------- */
@@ -371,13 +429,15 @@
 /* Bottom nav row ------------------------------------------------------------ */
 
 .rvl-nav-row {
+  --rvl-nav-row-pad-x: 1rem;
   width: 100%;
-  padding: 0 1rem;
+  padding-left: max(var(--rvl-nav-row-pad-x), env(safe-area-inset-left));
+  padding-right: max(var(--rvl-nav-row-pad-x), env(safe-area-inset-right));
   pointer-events: auto;
 }
 @media (min-width: 640px) {
   .rvl-nav-row {
-    padding: 0 1.5rem;
+    --rvl-nav-row-pad-x: 1.5rem;
   }
 }
 .rvl-nav-inner {
@@ -479,11 +539,37 @@
   width: fit-content;
   text-align: center;
   pointer-events: auto;
+  /* Fades out with the stage shift (same 0.35s) instead of popping; visibility
+     flips at the end of the fade out and at the start of the fade in. */
+  transition:
+    opacity 0.35s ease-out,
+    visibility 0s linear 0s;
+}
+.rvl-hint.rvl-hint-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.35s ease-out,
+    visibility 0s linear 0.35s;
 }
 .rvl-hint span {
   font-size: 0.6875rem;
   letter-spacing: 0.02em;
   color: var(--rvl-bar-fg-faint);
+}
+
+/* Visually hidden, still read by screen readers (the navigation live region). */
+.rvl-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Footer + overlay slots ---------------------------------------------------- */
@@ -514,12 +600,12 @@
 
 /* Touch-primary devices ------------------------------------------------------ */
 
-/* Skip the blurs on phones/tablets. A full-viewport Gaussian blur is one of the
-   most expensive things a mobile GPU composites, re-sampled under the open
-   fade, the thumbnail-zoom FLIP, and every swipe — and behind the 90%-opaque
-   overlay it's essentially invisible, so it spends frame budget on nothing.
-   The button blurs are smaller but stack several extra filter layers into the
-   top bar. Desktop GPUs keep both. (Must come after the .rvl-backdrop/.rvl-btn
+/* Skip the blurs on phones/tablets, even an opted-in --rvl-backdrop-filter. A
+   full-viewport Gaussian blur is one of the most expensive things a mobile GPU
+   composites, re-sampled under the open fade, the thumbnail-zoom FLIP, and
+   every swipe — and behind the 90%-opaque overlay it's essentially invisible,
+   so it spends frame budget on nothing. The button blurs are smaller but stack
+   several extra filter layers into the top bar. (Must come after the .rvl-backdrop/.rvl-btn
    base rules: same specificity, so source order decides.) */
 @media (hover: none) and (pointer: coarse) {
   .rvl-backdrop {
@@ -540,6 +626,7 @@
   .rvl-stage,
   .rvl-track,
   .rvl-overlay,
+  .rvl-hint,
   .rvl-btn,
   .rvl-nav-btn {
     transition-duration: 0.01ms !important;

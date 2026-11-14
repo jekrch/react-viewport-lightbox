@@ -2,6 +2,7 @@ import { useCallback, useRef } from "react";
 import { computeZoomTransform } from "./math";
 import { MIN_SCALE, MAX_SCALE, type ImageZoomPanState } from "./useImageZoomPan";
 import type { SlideNavigationState } from "./useSlideNavigation";
+import type { SwipeDismissHandlers } from "./useSwipeDismiss";
 
 /** Target scale for a touch double-tap zoom (a larger step-in than desktop). */
 const DOUBLE_TAP_ZOOM_SCALE = 2.5;
@@ -39,6 +40,8 @@ interface SlideGesture {
   startTime: number;
   locked: boolean;
   rejected: boolean;
+  /** Locked vertical and handed to the swipe-to-close handlers. */
+  dismissing: boolean;
 }
 
 /**
@@ -46,7 +49,8 @@ interface SlideGesture {
  * to the appropriate behavior based on current zoom state.
  *
  * When zoomed (scale > 1): pointer/touch drags are pans.
- * When unzoomed (scale === 1): pointer/touch drags are slide-to-navigate.
+ * When unzoomed (scale === 1): horizontal drags are slide-to-navigate, and
+ * vertical drags go to `dismiss` (swipe-to-close) when given, else do nothing.
  * Two-finger touch is always a pinch-zoom.
  */
 export function useGestureHandler(
@@ -61,6 +65,11 @@ export function useGestureHandler(
    * false, it zooms about the viewport center.
    */
   zoomToCursor = true,
+  /**
+   * Swipe-to-close handlers (see `useSwipeDismiss`). Omitted, a vertical drag
+   * is rejected and does nothing.
+   */
+  dismiss?: SwipeDismissHandlers,
 ): GestureHandlers {
   const {
     transformRef,
@@ -98,6 +107,7 @@ export function useGestureHandler(
     startTime: 0,
     locked: false,
     rejected: false,
+    dismissing: false,
   });
 
   // Double-tap detection for touch
@@ -127,6 +137,7 @@ export function useGestureHandler(
       sg.startTime = Date.now();
       sg.locked = false;
       sg.rejected = false;
+      sg.dismissing = false;
     },
     [setSlideActive, refreshSlideDistance],
   );
@@ -139,6 +150,11 @@ export function useGestureHandler(
       const dx = clientX - sg.startX;
       const dy = clientY - sg.startY;
 
+      if (sg.dismissing) {
+        dismiss?.move(dx, dy);
+        return;
+      }
+
       if (!sg.locked) {
         const absDx = Math.abs(dx);
         const absDy = Math.abs(dy);
@@ -147,6 +163,16 @@ export function useGestureHandler(
         // the drag is rejected as vertical below.
         gestureMovedRef.current = true;
         if (absDy > absDx * angleBias) {
+          // Vertical: swipe-to-close, unless a slide is still settling (the
+          // track is mid-flight) or the dismiss declines.
+          if (dismiss && swipeOffsetRef.current === 0 && dismiss.begin()) {
+            sg.dismissing = true;
+            // The neighbor panels were mounted for a possible horizontal
+            // slide; this drag won't use them.
+            setSlideActive(false);
+            dismiss.move(dx, dy);
+            return;
+          }
           sg.rejected = true;
           return;
         }
@@ -159,12 +185,18 @@ export function useGestureHandler(
       }
       applySlideOffset(offset);
     },
-    [hasPrev, hasNext, applySlideOffset],
+    [hasPrev, hasNext, applySlideOffset, dismiss, swipeOffsetRef, setSlideActive],
   );
 
   const endSlide = useCallback(
     (allowResolve: boolean) => {
       const sg = slideRef.current;
+      if (sg.active && sg.dismissing) {
+        sg.active = false;
+        sg.dismissing = false;
+        dismiss?.release();
+        return;
+      }
       if (sg.active && sg.locked && !sg.rejected && allowResolve) {
         const startTime = sg.startTime;
         sg.active = false;
@@ -174,7 +206,7 @@ export function useGestureHandler(
         if (swipeOffsetRef.current === 0) setSlideActive(false);
       }
     },
-    [resolveSlide, setSlideActive, swipeOffsetRef],
+    [resolveSlide, setSlideActive, swipeOffsetRef, dismiss],
   );
 
   // Pointer (mouse) handlers
@@ -246,9 +278,14 @@ export function useGestureHandler(
         };
         p.lastTouchPos = null;
 
-        // Cancel any slide in progress
-        if (slideRef.current.active) {
-          slideRef.current.active = false;
+        // Cancel any slide (or dismiss drag) in progress
+        const sg = slideRef.current;
+        if (sg.dismissing) {
+          sg.active = false;
+          sg.dismissing = false;
+          dismiss?.cancel();
+        } else if (sg.active) {
+          sg.active = false;
           snapBack();
         }
       } else if (e.touches.length === 1) {
@@ -263,7 +300,7 @@ export function useGestureHandler(
         }
       }
     },
-    [transformRef, snapBack, beginSlide, zoomEnabled],
+    [transformRef, snapBack, beginSlide, zoomEnabled, dismiss],
   );
 
   const handleTouchMove = useCallback(
@@ -333,6 +370,19 @@ export function useGestureHandler(
   const handleTouchEnd = useCallback(
     (e: React.TouchEvent) => {
       const p = panRef.current;
+
+      // A dismiss drag settles on its own terms (close, or glide back); the
+      // zoom reset and tap detection below must not touch the wrapper it moved.
+      const dg = slideRef.current;
+      if (dg.dismissing) {
+        if (e.touches.length === 0) {
+          dg.active = false;
+          dg.dismissing = false;
+          dismiss?.release();
+        }
+        return;
+      }
+
       const wasPinch = p.pinchStartDist !== null;
       p.pinchStartDist = null;
       p.pinchMidpoint = null;
@@ -426,6 +476,7 @@ export function useGestureHandler(
       swipeOffsetRef,
       zoomEnabled,
       zoomToCursor,
+      dismiss,
     ],
   );
 

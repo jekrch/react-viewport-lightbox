@@ -2,6 +2,8 @@
 
 export { ImageViewer } from "./components/ImageViewer";
 export { NavButton } from "./components/NavButton";
+export { ViewerButton, type ViewerButtonProps } from "./components/ViewerButton";
+export { originFromAttribute } from "./originFromAttribute";
 export {
   defaultIcons,
   CloseIcon,
@@ -19,6 +21,8 @@ export {
   useGestureHandler,
   useBarMeasure,
   useBodyScrollLock,
+  useViewerHistory,
+  useSwipeDismiss,
   clampTranslate,
   resolveSlideDirection,
   coverRect,
@@ -36,6 +40,10 @@ export type {
   ImageZoomPanState,
   ImageTransform,
   SlideNavigationState,
+  ViewerHistory,
+  SwipeDismissHandlers,
+  SwipeDismissState,
+  SwipeDismissArgs,
   Dims,
   Insets,
   SlideAction,
@@ -48,5 +56,7 @@ export type {
   ViewerIcons,
   ViewerSlot,
   ViewerRect,
+  ViewerStageShift,
+  ViewerHistoryOptions,
   ImageViewerProps,
 } from "./types";
