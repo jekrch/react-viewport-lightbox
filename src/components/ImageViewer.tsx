@@ -271,6 +271,8 @@ export function ImageViewer<TData = unknown>({
     slideDistance,
     commitSlide,
     jumpTarget,
+    handoff,
+    endHandoff,
     refreshSlideDistance,
   } = slide;
 
@@ -435,6 +437,32 @@ export function ImageViewer<TData = unknown>({
     }, 300);
     return () => clearTimeout(t);
   }, [displayScale, activeSrc, activeSrcSet, zoomSrc, placeholderSrc, loadFailed, imgRef]);
+
+  // A landed slide's panel covers the active <img>'s src swap (see
+  // useSlideNavigation's `handoff`) until the new image has decoded and a
+  // frame has painted it; then the panel goes. Capped, so a slow decode can't
+  // hold the panel (and the next queued flick) for long.
+  useEffect(() => {
+    if (!handoff) return;
+    let raf = 0;
+    let cancelled = false;
+    const finish = () => {
+      if (cancelled || raf) return;
+      clearTimeout(timer);
+      raf = requestAnimationFrame(() => {
+        raf = requestAnimationFrame(endHandoff);
+      });
+    };
+    const timer = setTimeout(finish, 500);
+    const img = imgRef.current;
+    if (img && typeof img.decode === "function") img.decode().then(finish, finish);
+    else finish();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      cancelAnimationFrame(raf);
+    };
+  }, [handoff, endHandoff, imgRef]);
 
   const handleActiveImageError = useCallback(() => {
     // A sharper source that won't load just falls back to the one shown before.
@@ -994,9 +1022,25 @@ export function ImageViewer<TData = unknown>({
         : -1;
   const nextIndex =
     jumpTarget != null && !jumpsBack ? jumpTarget : hasNextLinear ? index + 1 : hasNext ? 0 : -1;
-  const prevItem = prevIndex >= 0 ? items[prevIndex] : null;
-  const nextItem = nextIndex >= 0 ? items[nextIndex] : null;
-  const showAdjacent = slideActive || slideAnimating;
+  // During a hand-off only the panel that slid in stays, showing the item it
+  // carried (now the active one), so its painted image is untouched. Not while
+  // closing: it would hold a still copy over the collapsing image.
+  const handingOff = handoff && !closing ? handoff : null;
+  const prevItem = handingOff
+    ? handingOff === "prev"
+      ? item
+      : null
+    : prevIndex >= 0
+      ? items[prevIndex]
+      : null;
+  const nextItem = handingOff
+    ? handingOff === "next"
+      ? item
+      : null
+    : nextIndex >= 0
+      ? items[nextIndex]
+      : null;
+  const showAdjacent = slideActive || slideAnimating || !!handingOff;
   // Neighbors sit `slideDistance` px to the side (see measureSlideDistance),
   // which starts their image right at the screen edge, so they slide in from the
   // edge as the track shifts. Falls back to the full viewport width before the
@@ -1147,7 +1191,11 @@ export function ImageViewer<TData = unknown>({
               // track, so this rests its image just past the left screen edge
               // with breathing room. Opacity starts at 0 (CSS) and is driven
               // imperatively by the swipe (see useSlideNavigation).
-              style={{ transform: `translateX(${-adjacentOffset}px)` }}
+              // At center while handing off: the track has snapped back to 0,
+              // so this keeps the panel exactly where the slide left it.
+              style={{
+                transform: `translateX(${handingOff === "prev" ? 0 : -adjacentOffset}px)`,
+              }}
             >
               <img
                 src={prevItem.src}
@@ -1257,7 +1305,9 @@ export function ImageViewer<TData = unknown>({
               // See prev panel above: positioned `adjacentOffset` px to the
               // right (image just past the right screen edge); opacity is
               // swipe-driven imperatively.
-              style={{ transform: `translateX(${adjacentOffset}px)` }}
+              style={{
+                transform: `translateX(${handingOff === "next" ? 0 : adjacentOffset}px)`,
+              }}
             >
               <img
                 src={nextItem.src}

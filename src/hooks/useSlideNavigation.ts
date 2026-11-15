@@ -116,6 +116,16 @@ export interface SlideNavigationState {
    * neighbor panel on the slide's side in place of the adjacent one.
    */
   jumpTarget: number | null;
+  /**
+   * After a committed slide lands, the side whose panel carried the incoming
+   * image. That panel stays on screen, at center and showing the now-active
+   * item, until {@link endHandoff}: the active `<img>` has just swapped its
+   * src, and on a busy frame (iOS especially) it can paint blank once before
+   * the new image shows. The panel covers that frame. `null` otherwise.
+   */
+  handoff: "prev" | "next" | null;
+  /** The active image is painted: drop the {@link handoff} panel. */
+  endHandoff: () => void;
   snapBack: () => void;
   resolveSlide: (gestureStartTime: number) => void;
   setSlideActive: React.Dispatch<React.SetStateAction<boolean>>;
@@ -147,6 +157,15 @@ export function useSlideNavigation(
   const [slideActive, setSlideActive] = useState(false);
   const [slideDistance, setSlideDistance] = useState(0);
   const [jumpTarget, setJumpTarget] = useState<number | null>(null);
+  const [handoff, setHandoff] = useState<"prev" | "next" | null>(null);
+  // The direction of the commit that is navigating now (read when the new
+  // index lands), and the hand-off in progress, readable before its state is.
+  const pendingHandoffRef = useRef<"prev" | "next" | null>(null);
+  const handoffRef = useRef<"prev" | "next" | null>(null);
+  const endHandoff = useCallback(() => {
+    handoffRef.current = null;
+    setHandoff(null);
+  }, []);
   // Mirrors `slideDistance` for the per-frame fade math: reading state there
   // would tie the fade to a re-render that deliberately never happens mid-drag.
   const slideDistanceRef = useRef(0);
@@ -172,8 +191,11 @@ export function useSlideNavigation(
   // useLayoutEffect lands the corrected distance before the first frame paints,
   // so there's no visible jump from the primed estimate.
   useLayoutEffect(() => {
-    if (slideActive) refreshSlideDistance();
-  }, [slideActive, refreshSlideDistance]);
+    if (!slideActive) return;
+    // A new drag takes the panels back for neighbors.
+    if (handoffRef.current) endHandoff();
+    refreshSlideDistance();
+  }, [slideActive, refreshSlideDistance, endHandoff]);
 
   // With loop on, every interior position has a neighbor in both directions as
   // long as there's more than one item to wrap to.
@@ -308,6 +330,7 @@ export function useSlideNavigation(
               if (navigated) return;
               navigated = true;
               clearTimeout(timeout);
+              pendingHandoffRef.current = direction;
               onNavigate(newIndex);
             };
 
@@ -366,6 +389,11 @@ export function useSlideNavigation(
     setSlideAnimating(false);
     setSlideActive(false);
     setJumpTarget(null);
+    // A slide that just landed hands its panel over (see `handoff`); an index
+    // set from outside (a back press, the consumer) has none.
+    handoffRef.current = pendingHandoffRef.current;
+    pendingHandoffRef.current = null;
+    setHandoff(handoffRef.current);
   }, [currentIndex]);
 
   // Allow the next commit only after React has painted the new panel, then
@@ -374,7 +402,12 @@ export function useSlideNavigation(
   // gesture that landed mid-animation. Re-checked against the bounds at fire
   // time: the queued direction may have no target from the new index (e.g. a
   // "next" queued while sliding onto the last item).
+  //
+  // While a hand-off is covering the swap, wait it out (the ref, since this
+  // can run before the hand-off's state lands): starting the next slide then
+  // would take the cover away on the very frame it exists for.
   useEffect(() => {
+    if (handoffRef.current) return;
     readyRef.current = true;
     const queued = queuedFlickRef.current;
     queuedFlickRef.current = null;
@@ -384,12 +417,13 @@ export function useSlideNavigation(
         commitSlide(queued.target < currentIndex ? "prev" : "next", undefined, queued.target);
     } else if (queued?.direction === "prev" && hasPrev) commitSlide("prev");
     else if (queued?.direction === "next" && hasNext) commitSlide("next");
-    // Keyed on the index ALONE. hasPrev/hasNext/commitSlide are read fresh from
-    // the post-navigation render, but listing them would re-run this effect on
-    // their identity churn (an inline `items` array re-creates commitSlide
-    // every render) — setting readyRef mid-commit and unblocking double-commits.
+    // Keyed on the index (and the hand-off ending) ALONE. hasPrev/hasNext/
+    // commitSlide are read fresh from the post-navigation render, but listing
+    // them would re-run this effect on their identity churn (an inline `items`
+    // array re-creates commitSlide every render) — setting readyRef mid-commit
+    // and unblocking double-commits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentIndex]);
+  }, [currentIndex, handoff]);
 
   return {
     slideTrackRef,
@@ -403,6 +437,8 @@ export function useSlideNavigation(
     applySlideOffset,
     commitSlide,
     jumpTarget,
+    handoff,
+    endHandoff,
     snapBack,
     resolveSlide,
     setSlideActive,

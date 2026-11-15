@@ -2,6 +2,11 @@
 
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 
+## v1.0.1
+
+- **Slide hand-off** — the image no longer blinks blank as a slide lands (iOS, fast paging).
+- **Bundle** — budget raised for the slide hand-off.
+
 ## v1.0.0
 
 - **`wheel`** (breaking) — trackpad pinch zooms, scroll pans when zoomed; `wheel="zoom"` restores zoom-on-scroll.

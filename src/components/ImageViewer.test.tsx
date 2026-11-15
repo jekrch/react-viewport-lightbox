@@ -1448,6 +1448,10 @@ describe("<ImageViewer> keyboard zoom and pan", () => {
       expect(onIndexChange).toHaveBeenLastCalledWith(3);
 
       rerender({ items: fourItems, onNavigate, index: 3 });
+      // The landed slide's hand-off (this decode never settles, so its cap).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(700);
+      });
       key("Home");
       expect(onNavigate).toHaveBeenLastCalledWith("prev");
       expect(document.querySelector('.rvl-adjacent img[src="/a.jpg"]')).not.toBeNull();
@@ -1910,5 +1914,76 @@ describe("<ImageViewer> zoom-resolution upgrade", () => {
     act(() => void vi.advanceTimersByTime(400));
     // Only the neighbor warm (/b.jpg) decodes; nothing probes for /a.jpg.
     expect(pendingDecodes.map((p) => p.src)).toEqual([expect.stringMatching(/\/b\.jpg$/)]);
+  });
+});
+
+describe("<ImageViewer> slide hand-off", () => {
+  const panels = () => [...document.querySelectorAll(".rvl-adjacent")] as HTMLElement[];
+  beforeEach(() => {
+    vi.useFakeTimers();
+    installDecode();
+  });
+  afterEach(() => {
+    uninstallDecode();
+    vi.useRealTimers();
+  });
+
+  // Drive a committed next-slide through to the index change, as the parent's
+  // onIndexChange → re-render would.
+  async function slideNext(from: number) {
+    const onIndexChange = vi.fn();
+    const utils = renderViewer({ index: from, onIndexChange });
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(onIndexChange).toHaveBeenLastCalledWith(from + 1);
+    utils.rerender({ index: from + 1, onIndexChange });
+    return { ...utils, onIndexChange };
+  }
+
+  it("keeps the incoming panel at center, on the active item, until the new image decodes", async () => {
+    await slideNext(0);
+    // Only the panel that slid in, at center, still showing /b.jpg.
+    expect(panels()).toHaveLength(1);
+    expect(panels()[0].style.transform).toBe("translateX(0px)");
+    expect(panels()[0].querySelector("img")!.getAttribute("src")).toBe("/b.jpg");
+    expect(screen.getByAltText("Bravo")).toHaveAttribute("src", "/b.jpg");
+
+    // The active image decodes; the panel goes after a painted frame.
+    await settleDecodes("/b.jpg");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
+    expect(panels()).toHaveLength(0);
+  });
+
+  it("gives up waiting on a decode that stalls", async () => {
+    await slideNext(0);
+    expect(panels()).toHaveLength(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    expect(panels()).toHaveLength(0);
+  });
+
+  it("holds a flick that lands mid-hand-off until the hand-off ends", async () => {
+    const { onIndexChange, rerender } = await slideNext(0);
+    const onNavigate = vi.fn();
+    rerender({ index: 1, onIndexChange, onNavigate });
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    // Still covering the swap: the next slide hasn't started.
+    expect(onNavigate).not.toHaveBeenCalled();
+    await settleDecodes("/b.jpg");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
+    expect(onNavigate).toHaveBeenCalledWith("next");
+  });
+
+  it("has nothing to hand off when the index changes from outside", () => {
+    const { rerender } = renderViewer({ index: 0 });
+    rerender({ index: 1 });
+    expect(panels()).toHaveLength(0);
   });
 });

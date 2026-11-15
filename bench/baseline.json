@@ -1,38 +1,38 @@
 {
-  "recorded": "2026-11-14T20:57:45.390Z",
+  "recorded": "2026-11-15T00:24:53.595Z",
   "runs": 5,
   "throttle": 4,
   "result": {
     "open": {
-      "busyMs": 324.9,
-      "longestTaskMs": 134.6,
-      "styleMs": 33.9,
-      "styleCount": 33,
-      "layoutMs": 55.3,
-      "wallMs": 489.3
+      "busyMs": 282.4,
+      "longestTaskMs": 91.1,
+      "styleMs": 34.4,
+      "styleCount": 31,
+      "layoutMs": 12,
+      "wallMs": 431.8
     },
     "swipe": {
-      "busyMs": 212.3,
-      "longestTaskMs": 10,
-      "styleMs": 13.2,
-      "styleCount": 39,
-      "layoutMs": 2.6,
+      "busyMs": 245.8,
+      "longestTaskMs": 12.3,
+      "styleMs": 14.3,
+      "styleCount": 41,
+      "layoutMs": 3.5,
       "slowFrames": 0
     },
     "close": {
-      "busyMs": 303,
-      "longestTaskMs": 76.4,
-      "styleMs": 28.8,
-      "styleCount": 25,
-      "layoutMs": 47.1,
-      "wallMs": 375
+      "busyMs": 284.9,
+      "longestTaskMs": 38.5,
+      "styleMs": 27.7,
+      "styleCount": 27,
+      "layoutMs": 3.8,
+      "wallMs": 336.9
     },
     "dismiss": {
-      "busyMs": 348.3,
-      "longestTaskMs": 75.1,
-      "styleMs": 33,
-      "styleCount": 33,
-      "layoutMs": 52.4,
+      "busyMs": 365,
+      "longestTaskMs": 39.3,
+      "styleMs": 35.4,
+      "styleCount": 35,
+      "layoutMs": 6.7,
       "slowFrames": 1
     }
   }
