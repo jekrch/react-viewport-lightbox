@@ -59,7 +59,7 @@ const BUDGETS = [
   { label: "index", load: () => bundled("dist/index.js"), maxGzip: 18.25 * 1024 },
   // `import … from "@jekrch/react-viewport-lightbox/lazy"`: lands in the
   // consumer's main bundle, so it must stay tiny.
-  { label: "lazy (main bundle)", load: () => bundled("dist/lazy.js"), maxGzip: 1.5 * 1024 },
+  { label: "lazy (main bundle)", load: () => bundled("dist/lazy.js"), maxGzip: 1.6 * 1024 },
   // The recommended path on its own: what `useLightbox` from `/lazy` costs up front.
   {
     label: "lazy useLightbox (main bundle)",
@@ -67,7 +67,7 @@ const BUDGETS = [
     maxGzip: 1.25 * 1024,
   },
   // What `/lazy` fetches on first open or preloadViewer().
-  { label: "lazy (viewer chunk)", load: viewerChunk, maxGzip: 17.25 * 1024 },
+  { label: "lazy (viewer chunk)", load: viewerChunk, maxGzip: 17.5 * 1024 },
   { label: "styles.css", load: () => readFileSync("dist/styles.css"), maxGzip: 2.5 * 1024 },
 ];
 

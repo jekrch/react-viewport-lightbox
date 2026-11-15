@@ -60,6 +60,22 @@ describe("prefetchItem", () => {
     expect(created).toHaveLength(1);
   });
 
+  it("decodes again once a finished source has gone stale", async () => {
+    vi.useFakeTimers();
+    try {
+      await expect(prefetchItem({ src: "/a.jpg" })).resolves.toBe(true);
+      // Still fresh: shared.
+      prefetchItem({ src: "/a.jpg" });
+      expect(created).toHaveLength(1);
+      // A later open can't trust the browser to have kept it decoded.
+      vi.advanceTimersByTime(10_000);
+      prefetchItem({ src: "/a.jpg" });
+      expect(created).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("treats a different srcset as a different source", () => {
     prefetchItem({ src: "/a.jpg" });
     prefetchItem({ src: "/a.jpg", srcSet: "/a-800.jpg 800w" });

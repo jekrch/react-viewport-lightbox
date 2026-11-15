@@ -16,7 +16,13 @@ type PrefetchSource = Pick<ViewerItem, "src" | "srcSet" | "sizes">;
 // neighbor warm, and the thumbnail-first open all land here, so an image
 // already in flight is never requested twice. Each entry holds its Image until
 // it settles so an in-flight fetch isn't dropped by GC.
-const inflight = new Map<string, Promise<boolean>>();
+//
+// A finished source is only remembered briefly. Browsers (iOS Safari above
+// all) throw decoded images away under memory pressure, so "decoded once" says
+// nothing about a later open: a repeat call after FRESH_MS decodes again (the
+// bytes come from the HTTP cache).
+const inflight = new Map<string, { img: HTMLImageElement; done: Promise<boolean> }>();
+const FRESH_MS = 10_000;
 
 // srcset/sizes are part of the key: the same `src` with a different srcset can
 // resolve to a different candidate.
@@ -24,19 +30,15 @@ const keyOf = (item: PrefetchSource) =>
   item.srcSet ? `${item.src}\n${item.srcSet}\n${item.sizes ?? ""}` : item.src;
 
 /**
- * Start fetching and decoding an item's full image ahead of time, e.g. on a
- * tile's `pointerenter` / `pointerdown`, so the viewer opens on a warm cache.
- * Mirrors `srcSet`/`sizes` so the browser picks the candidate the viewer's
- * `<img>` will. Repeat calls for the same source share one request.
- *
- * Resolves `true` once decoded, `false` on failure (a failed source can be
- * retried) or during SSR.
+ * @internal {@link prefetchItem}, also handing back the off-DOM image, so a
+ * caller can keep it referenced while the image matters (WebKit is slower to
+ * purge the decoded data of an image something still holds).
  */
-export function prefetchItem(
+export function warmImage(
   item: PrefetchSource,
   { priority = "high" }: PrefetchOptions = {},
-): Promise<boolean> {
-  if (typeof window === "undefined" || !item.src) return Promise.resolve(false);
+): { img: HTMLImageElement; done: Promise<boolean> } | null {
+  if (typeof window === "undefined" || !item.src) return null;
   const key = keyOf(item);
   const existing = inflight.get(key);
   if (existing) return existing;
@@ -49,11 +51,13 @@ export function prefetchItem(
   }
   img.src = item.src;
 
-  const promise = new Promise<boolean>((resolve) => {
+  const done = new Promise<boolean>((resolve) => {
     const settle = (ok: boolean) => {
       img.onload = null;
       img.onerror = null;
-      if (!ok) inflight.delete(key);
+      // A failure can be retried at once; a success is shared for a while.
+      if (!ok) forget();
+      else setTimeout(forget, FRESH_MS);
       resolve(ok);
     };
     if (typeof img.decode === "function") {
@@ -66,8 +70,26 @@ export function prefetchItem(
       img.onerror = () => settle(false);
     }
   });
-  inflight.set(key, promise);
-  return promise;
+  const entry = { img, done };
+  const forget = () => {
+    if (inflight.get(key) === entry) inflight.delete(key);
+  };
+  inflight.set(key, entry);
+  return entry;
+}
+
+/**
+ * Start fetching and decoding an item's full image ahead of time, e.g. on a
+ * tile's `pointerenter` / `pointerdown`, so the viewer opens on a warm cache.
+ * Mirrors `srcSet`/`sizes` so the browser picks the candidate the viewer's
+ * `<img>` will. Repeat calls for the same source share one request while it's
+ * in flight and for a short while after.
+ *
+ * Resolves `true` once decoded, `false` on failure (a failed source can be
+ * retried) or during SSR.
+ */
+export function prefetchItem(item: PrefetchSource, options?: PrefetchOptions): Promise<boolean> {
+  return warmImage(item, options)?.done ?? Promise.resolve(false);
 }
 
 /** @internal Clears the shared request cache. Tests only. */

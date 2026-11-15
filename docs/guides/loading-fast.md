@@ -63,8 +63,10 @@ export function Gallery({ items }: { items: ViewerItem[] }) {
 - **`prefetchItem(item, { priority? })`** fetches and decodes an item's full
   image (mirroring `srcSet`/`sizes`) so the open starts from a warm cache. Hover
   usually comes a few hundred milliseconds before the click; `pointerdown` covers
-  touch. Repeat calls share one request, and the viewer's own warming and
-  thumbnail-first open reuse it. Also exported from the main entry.
+  touch. Repeat calls share one request while it's in flight and for a few
+  seconds after, and the viewer's own warming and thumbnail-first open reuse
+  it. Later calls decode again (from the HTTP cache), since phones drop decoded
+  images under memory pressure. Also exported from the main entry.
 
 The `/lazy` entry re-exports `originFromAttribute` and the types, so a lazy
 gallery doesn't need the main entry. Importing `ImageViewer` (or the hooks) from

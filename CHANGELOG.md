@@ -2,6 +2,12 @@
 
 Each entry mirrors its [GitHub Release](https://github.com/jekrch/react-viewport-lightbox/releases).
 
+## v1.0.2
+
+- **Reopened viewer** — neighbors decode again on every open, so slides no longer blink in on iOS.
+- **`prefetchItem`** — shares a request only briefly after it lands, then decodes again.
+- **Bundle** — budget raised for re-warming neighbors on each open.
+
 ## v1.0.1
 
 - **Slide hand-off** — the image no longer blinks blank as a slide lands (iOS, fast paging).

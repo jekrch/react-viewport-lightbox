@@ -30,7 +30,7 @@ import { NavButton } from "./NavButton";
 import { ViewerButton } from "./ViewerButton";
 import { cx } from "./cx";
 import { defaultHintText } from "./hint";
-import { prefetchItem, prefersSaveData } from "../prefetch";
+import { prefersSaveData, warmImage } from "../prefetch";
 
 // Window after open during which synthesized mouse click/dblclick are ignored.
 // A tap (or double-tap) that opens the viewer fires iOS's synthesized `click` /
@@ -378,14 +378,26 @@ export function ImageViewer<TData = unknown>({
   // a thumbnail-first open decoded off-DOM, and anything already shown. Gates
   // `decoding="sync"` on the active image (see there).
   const warmSrcsRef = useRef<Set<string>>(new Set());
+  // Neighbors whose warm decode has finished during this open: their panel
+  // <img> can decode `sync` (see the panels below). And the warmed images
+  // themselves, held while they're neighbors: WebKit purges the decoded data
+  // of an image nothing references first, which on a later open of a big
+  // gallery left the incoming panel to slide in blank.
+  const decodedSrcsRef = useRef<Set<string>>(new Set());
+  const heldWarmRef = useRef<HTMLImageElement[]>([]);
   useEffect(() => {
+    const held: HTMLImageElement[] = [];
     for (const [src, srcSet, sizes] of JSON.parse(warmKey) as typeof warmSources) {
-      prefetchItem({ src, srcSet, sizes }, { priority: "low" });
+      const warm = warmImage({ src, srcSet, sizes }, { priority: "low" });
+      if (!warm) continue;
+      held.push(warm.img);
+      warm.done.then((ok) => ok && decodedSrcsRef.current.add(src));
       // Marked on request, not on decode: a swipe/button commit waits on its
       // own decode of the target before navigating, so by the time this src
       // becomes the active image it is decoded (or the commit timed out).
       warmSrcsRef.current.add(src);
     }
+    heldWarmRef.current = held;
   }, [warmKey]);
 
   // A thumbnail-first open decodes the full image off-DOM before swapping it in
@@ -1202,7 +1214,10 @@ export function ImageViewer<TData = unknown>({
                 srcSet={prevItem.srcSet}
                 sizes={prevItem.sizes}
                 alt=""
-                decoding="async"
+                // `sync` once its warm decode has landed, so the first frame of
+                // the slide paints it; `async` (no main-thread decode as the
+                // drag starts) for one still loading.
+                decoding={decodedSrcsRef.current.has(prevItem.src) ? "sync" : "async"}
                 className={cx("rvl-img", cn("image"))}
                 style={imgStyle}
                 draggable={false}
@@ -1315,7 +1330,7 @@ export function ImageViewer<TData = unknown>({
                 sizes={nextItem.sizes}
                 alt=""
                 onLoad={refreshSlideDistance}
-                decoding="async"
+                decoding={decodedSrcsRef.current.has(nextItem.src) ? "sync" : "async"}
                 className={cx("rvl-img", cn("image"))}
                 style={imgStyle}
                 draggable={false}

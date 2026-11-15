@@ -565,6 +565,38 @@ describe("<ImageViewer> neighbor warm", () => {
     expect(warmed).toEqual(["/a.jpg", "/c.jpg", "/d.jpg", "/e.jpg"]);
   });
 
+  it("warms again on a later open, after the earlier decode has gone stale", async () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = renderViewer({ index: 1 });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(warmed).toEqual(["/a.jpg", "/c.jpg"]);
+      unmount();
+      // The browser may have dropped those decodes since (iOS does under
+      // memory pressure): a reopen decodes them again rather than trusting it.
+      act(() => void vi.advanceTimersByTime(10_000));
+      renderViewer({ index: 1 });
+      expect(warmed).toEqual(["/a.jpg", "/c.jpg", "/a.jpg", "/c.jpg"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("decodes a neighbor panel sync once its warm decode has landed", async () => {
+    renderViewer({ index: 1 });
+    // Let the warm decodes resolve, then start a slide to mount the panels.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    const panelImg = (src: string) =>
+      document.querySelector(`.rvl-adjacent img[src="${src}"]`) as HTMLImageElement;
+    expect(panelImg("/c.jpg")).toHaveAttribute("decoding", "sync");
+    expect(panelImg("/a.jpg")).toHaveAttribute("decoding", "sync");
+  });
+
   it("warms nothing with preloadCount 0", () => {
     renderViewer({ index: 1, preloadCount: 0 });
     expect(warmed).toEqual([]);
